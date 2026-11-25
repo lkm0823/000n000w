@@ -1,0 +1,12 @@
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+.netlify/
+
+# 공개 저장소에 올리지 않는 것
+backup/
+reference/
+parse.html
+path.html
+CLAUDE.md

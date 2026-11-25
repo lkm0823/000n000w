@@ -1,0 +1,1898 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>[hidden]{display:none!important}</style>
+<title>Snow Folio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* Layout: 전체 화면 3D 캔버스 위에 비네트와 HUD를 얹는다. 좌상단 진행바, 좌하단 속도계, 우하단 조작키, 우상단 튜닝, 중앙 시작 카드.
+     Look: 3D 월드가 밝은 설원이므로 UI는 한 가지 밝은 톤으로 고정한다(다크 전환 없음). 포인트색은 보더 재킷, 출발 아치와 같은 주황. */
+  :root {
+    --sky: #dce7f2;
+    --ink: #10263a;
+    --ink-soft: #4a6176;
+    --snow: #f6faff;
+    --accent: #ff5a36;
+    --glass: rgba(246, 250, 255, 0.8);
+    --line: rgba(16, 38, 58, 0.16);
+    --font-display: 'Barlow Condensed', 'Noto Sans KR', sans-serif;
+    --font-body: 'Noto Sans KR', 'Barlow Condensed', system-ui, sans-serif;
+    color-scheme: light;
+  }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--sky); color: var(--ink); font: 400 14px/1.5 var(--font-body); overflow: hidden; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  #c.drag { cursor: grabbing; }
+  .vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse 75% 70% at 50% 46%, rgba(16,38,58,0) 58%, rgba(16,38,58,.26) 100%); }
+  .fade { position: fixed; inset: 0; pointer-events: none; background: #05080c; opacity: 0; }   /* 리프트 탑승 암전 */
+  .hud { position: fixed; inset: 0; pointer-events: none; }
+  .hud > * { position: absolute; }
+
+  .progress { top: 16px; left: 16px; width: min(420px, calc(100% - 190px)); }
+  .progress .labels { display: flex; justify-content: space-between; font: 500 11px/1 var(--font-body); color: var(--ink); text-shadow: 0 1px 0 rgba(255,255,255,.7); }
+  .progress .bar { position: relative; height: 4px; margin-top: 7px; background: rgba(16,38,58,.2); border-radius: 2px; }
+  .progress .bar i { position: absolute; top: 50%; left: 0; width: 12px; height: 12px; margin: -6px 0 0 -6px; background: var(--accent); border: 2px solid var(--snow); border-radius: 50%; box-shadow: 0 1px 4px rgba(16,38,58,.35); }
+
+  .speedo { left: 16px; bottom: 16px; color: var(--snow); text-shadow: 0 2px 10px rgba(16,38,58,.45), 0 1px 2px rgba(16,38,58,.5); }
+  .speedo .num { font: 700 clamp(64px, 11vw, 112px)/0.86 var(--font-display); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .speedo .unit { font: 600 14px/1 var(--font-display); letter-spacing: .2em; text-transform: uppercase; margin-top: 4px; }
+  .speedo .sub { display: flex; gap: 14px; margin-top: 8px; font: 500 12px/1.2 var(--font-body); font-variant-numeric: tabular-nums; opacity: .92; }
+
+  .toast { top: 62px; left: 50%; transform: translate(-50%, -6px); max-width: calc(100% - 32px); padding: 8px 16px; background: var(--ink); color: var(--snow); font: 500 14px/1.4 var(--font-body); border-radius: 999px; opacity: 0; transition: opacity .2s, transform .2s; white-space: nowrap; }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+  .hints { right: 16px; bottom: 16px; display: grid; grid-template-columns: auto auto; gap: 6px 12px; align-items: center; padding: 10px 14px; background: var(--glass); border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); font-size: 12px; color: var(--ink); }
+  .hints .k { display: flex; gap: 3px; justify-content: flex-end; }
+  kbd { font: 600 12px/1 var(--font-display); letter-spacing: .04em; padding: 3px 7px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--snow); color: var(--ink); }
+
+  .minimap { top: 16px; right: 16px; width: 200px; height: 200px; border-radius: 12px; overflow: hidden; background: #e9eff6; border: 1px solid var(--line); box-shadow: 0 6px 20px rgba(16,38,58,.18); }
+  .minimap { pointer-events: auto; cursor: pointer; transition: width .22s ease, height .22s ease; }
+  .minimap.big { width: min(calc((100vh - 32px) * 0.57), calc(100vw - 32px)); height: calc(100vh - 32px); border-radius: 14px; box-shadow: 0 18px 50px rgba(16,38,58,.28); }
+  .minimap.big ~ .tune-btn, .minimap.big ~ .tune { visibility: hidden; }
+  .minimap .cap { position: absolute; left: 10px; top: 10px; z-index: 1; display: none; align-items: center; gap: 6px; padding: 6px 10px; font: 600 12px/1 var(--font-body); color: var(--ink); background: var(--glass); border: 1px solid var(--line); border-radius: 8px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .minimap.big .cap { display: flex; }
+  .minimap .key { position: absolute; right: 8px; bottom: 8px; z-index: 1; }
+  .minimap.big .key { display: none; }
+  .minimap canvas { display: block; width: 100%; height: 100%; }
+  .minimap::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 16px 4px rgba(236,242,248,.9); }   /* 가장자리를 눈안개처럼 */
+  .tune-btn { top: 228px; right: 16px; pointer-events: auto; font: 600 12px/1 var(--font-body); padding: 9px 12px; color: var(--ink); background: var(--glass); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .tune-btn:hover { background: var(--snow); }
+  .tune { top: 268px; right: 16px; width: min(300px, calc(100% - 32px)); max-height: calc(100% - 290px); overflow: auto; pointer-events: auto; padding: 14px; background: var(--glass); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  .tune h2 { margin: 0 0 2px; font: 700 20px/1.1 var(--font-display); letter-spacing: .06em; text-transform: uppercase; }
+  .tune p { margin: 0 0 10px; font-size: 12px; color: var(--ink-soft); }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin-bottom: 10px; }
+  .row label { font-size: 12px; font-weight: 500; }
+  .row output { font: 600 13px/1 var(--font-display); letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+  .row input { grid-column: 1 / -1; width: 100%; margin: 2px 0 0; accent-color: var(--accent); }
+  .row small { grid-column: 1 / -1; font-size: 11px; color: var(--ink-soft); }
+  .tune .btns { display: flex; gap: 8px; margin-top: 4px; }
+  button.plain { flex: 1; font: 500 12px/1 var(--font-body); padding: 9px 10px; color: var(--ink); background: var(--snow); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+  button.plain:hover { background: #fff; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .start { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto; padding: 24px 24px 20px; background: rgba(246,250,255,.9); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); pointer-events: auto; box-shadow: 0 18px 50px rgba(16,38,58,.22); }
+  .start h1 { margin: 0; font: 700 clamp(44px, 9vw, 64px)/0.9 var(--font-display); letter-spacing: .01em; text-transform: uppercase; text-wrap: balance; }
+  .start .tag { margin: 8px 0 0; font: 600 12px/1.2 var(--font-display); letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
+  .start p.lead { margin: 12px 0 14px; color: var(--ink-soft); max-width: 62ch; }
+  .start dl { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; margin: 0 0 18px; align-items: center; font-size: 13px; }
+  .start dt { display: flex; gap: 3px; flex-wrap: wrap; }
+  .start dd { margin: 0; }
+  .go { width: 100%; padding: 13px 16px; font: 700 18px/1 var(--font-display); letter-spacing: .14em; text-transform: uppercase; color: var(--ink); background: var(--accent); border: 0; border-radius: 10px; cursor: pointer; }
+  .go:hover { filter: brightness(1.06); }
+  .start .course { display: flex; gap: 8px; margin-top: 8px; }
+  .start .foot { margin: 10px 0 0; font-size: 11px; color: var(--ink-soft); text-align: center; }
+
+  @media (max-width: 720px) {
+    .hints { display: none; }
+    .speedo .sub { flex-wrap: wrap; }
+  }
+  @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+</style>
+
+<canvas id="c" aria-label="스노우보드 월드"></canvas>
+<div class="vignette"></div>
+<div class="fade" id="fade"></div>
+
+<div class="hud">
+  <div class="progress" aria-label="하산 진행도">
+    <div class="labels"><span>정상</span><span>베이스캠프</span></div>
+    <div class="bar"><i id="mark"></i></div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="speedo">
+    <div class="num" id="spd">0</div>
+    <div class="unit">km/h</div>
+    <div class="sub"><span id="drop">낙차 0 m</span><span id="dist">이동 0 m</span></div>
+  </div>
+  <div class="hints">
+    <span class="k"><kbd>W</kbd></span><span>밀기</span>
+    <span class="k"><kbd>A</kbd><kbd>D</kbd></span><span>회전</span>
+    <span class="k"><kbd>S</kbd></span><span>브레이크</span>
+    <span class="k"><kbd>Space</kbd></span><span>점프</span>
+    <span class="k"><kbd>Shift</kbd></span><span>부스트</span>
+    <span class="k"><kbd>R</kbd></span><span>처음으로</span>
+    <span class="k"><kbd>Enter</kbd></span><span>리프트 타기</span>
+    <span class="k"><kbd>M</kbd></span><span>지도 펼치기</span>
+  </div>
+  <div class="minimap" aria-label="미니맵 (M 또는 클릭으로 펼치기)" aria-expanded="false"><canvas id="minimap"></canvas><span class="cap">지도 · <kbd>M</kbd> 닫기</span><kbd class="key">M</kbd></div>
+  <button class="tune-btn" id="tuneBtn" aria-expanded="false" aria-controls="tune">조작감 튜닝</button>
+  <div class="tune" id="tune" hidden>
+    <h2>조작감 튜닝</h2>
+    <p>슬라이더를 움직이며 타 보세요. 마음에 드는 값은 복사해서 알려 주시면 기본값으로 반영합니다.</p>
+    <div id="rows"></div>
+    <div class="btns"><button class="plain" id="tReset">기본값</button><button class="plain" id="tCopy">값 복사</button></div>
+    <textarea id="tOut" readonly hidden rows="3" style="width:100%;margin-top:8px;font:12px/1.4 monospace"></textarea>
+  </div>
+  <div class="start" id="start">
+    <h1>Snow Folio</h1>
+    <p class="tag">월드 프로토타입 v0.3</p>
+    <p class="lead">설원 지형과 보더 이동을 먼저 확인하는 버전입니다. 리프트 오른쪽에 두 번째 슬로프인 스노우 파크(테이블탑·레일·박스·하프파이프)가 생겼어요.</p>
+    <dl>
+      <dt><kbd>W</kbd></dt><dd>밀기. 완만한 출발 구간에서는 먼저 밀어 주세요</dd>
+      <dt><kbd>A</kbd><kbd>D</kbd></dt><dd>회전. 공중에서는 스핀</dd>
+      <dt><kbd>S</kbd></dt><dd>브레이크</dd>
+      <dt><kbd>Space</kbd></dt><dd>점프. 코스의 눈 언덕 끝에서 누르면 높이 뜹니다</dd>
+      <dt><kbd>Shift</kbd></dt><dd>부스트</dd>
+      <dt><kbd>R</kbd></dt><dd>지금 코스의 출발점으로</dd>
+      <dt><kbd>M</kbd></dt><dd>지도 펼치기·닫기(미니맵 클릭도 됨)</dd>
+      <dt>드래그</dt><dd>카메라 돌리기. 놓으면 제자리로 돌아옵니다</dd>
+      <dt>파크</dt><dd>레일·박스 앞 낮은 램프로 올라타면 그라인드, 위에서 <kbd>Space</kbd>로 뛰어내리기</dd>
+    </dl>
+    <button class="go" id="go">출발하기</button>
+    <div class="course"><button class="plain" id="goMain">메인 슬로프에서 출발</button><button class="plain" id="goPark">스노우 파크에서 출발</button></div>
+    <p class="foot">PC 키보드 전용 · Esc로 일시정지</p>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+'use strict';
+
+/* ───────── 유틸 ───────── */
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const ss = (a, b, t) => { t = clamp((t - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const angDiff = (a, b) => { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
+const hash2 = (x, z) => { const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return s - Math.floor(s); };
+const hash3 = (x, y, z) => { const s = Math.sin(x * 12.9898 + y * 39.346 + z * 78.233) * 43758.5453; return s - Math.floor(s); };
+function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const RM = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const C = h => new THREE.Color(h).convertSRGBToLinear();          // 화면 색(sRGB) → 조명 계산용 선형 색
+const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
+
+/* ───────── 지형 함수 (물리와 렌더가 같은 함수를 쓴다) ───────── */
+const Z_START = -360, Z_END = 335;
+const xc = z => 22 * Math.sin(z * 0.011 + 0.5) + 9 * Math.sin(z * 0.029 + 1.3);
+const KICKS = [[-255, -5], [-140, 8], [-15, -6], [105, 7], [215, -4]];
+const LIFT_DX = 44;
+function kickers(z, dx) {
+  let h = 0;
+  for (const k of KICKS) {
+    const u = z - k[0]; if (u < -14 || u > 5) continue;
+    const lat = Math.exp(-Math.pow((dx - k[1]) / 6.5, 2)); if (lat < 0.01) continue;
+    h += 4.2 * ss(-13, -1.2, u) * (1 - ss(-1.2, 2.8, u)) * lat;
+  }
+  return h;
+}
+/* 스노우 파크(두 번째 슬로프): 리프트 오른쪽, x = PX에서 곧게 내려간다. 메인과 같은 출발·도착 높이지만
+   둔덕·굴곡 없이 매끈한 바닥 + 테이블탑 4개 + 레일·박스(낮은 진입 램프) + 끝에 하프파이프. */
+const PX = 124, PW = 30, PZ0 = -372, PZ1 = 360, PZ_START = -350, PARK_EDGE = 62;   // 중심선 x, 고해상도 지형 패치 반폭·z 범위, 출발 z, 오른쪽 경계
+const TABLES = [                                                   // z: 도약대 시작, ramp/top/land: 도약대·평평한 상판·착지면 길이, half: 상판 반폭
+  { z: -262, h: 1.8, ramp: 8, top: 6, land: 10, half: 5.5, label: 'S' },
+  { z: -152, h: 2.8, ramp: 11, top: 10, land: 14, half: 7, label: 'M' },
+  { z: -30, h: 3.8, ramp: 14, top: 14, land: 18, half: 7.5, label: 'L' },
+  { z: 95, h: 2.8, ramp: 11, top: 10, land: 14, half: 7, label: 'M' },
+];
+const JIBS = [                                                     // d: 파크 중심선 기준 x, z: 시작, len: 길이, hb: 지면 위 높이, w: 폭
+  { type: 'box', d: 0, z: -300, len: 9, hb: 0.5, w: 0.6 },
+  { type: 'rail', d: -6, z: -195, len: 10, hb: 0.75, w: 0.1 },
+  { type: 'box', d: 6, z: -195, len: 10, hb: 0.6, w: 0.6 },
+  { type: 'rail', d: 0, z: -78, len: 14, hb: 0.8, w: 0.1 },
+  { type: 'box', d: -6, z: 45, len: 12, hb: 0.6, w: 0.9 },
+  { type: 'rail', d: 6, z: 45, len: 12, hb: 0.8, w: 0.1 },
+  { type: 'rail', d: 0, z: 160, len: 16, hb: 0.85, w: 0.1 },
+];
+const PIPE = { z0: 208, z1: 306, F: 4, R: 4.5, CAP: 3.6 };        // 바닥 반폭 F, 전이 반지름 R, 벽 높이 CAP (바닥은 그대로, 벽을 쌓아 올린 형태)
+PIPE.lip = PIPE.F + Math.sqrt(PIPE.R * PIPE.R - Math.pow(PIPE.R - PIPE.CAP, 2));   // 벽 꼭대기(코핑)까지의 거리
+const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
+const parkBowl = ad => 2.4 * ss(16, 23, ad) + 0.0016 * Math.pow(Math.max(0, ad - 23), 2) + 0.004 * Math.pow(Math.max(0, ad - 36), 2) + 0.012 * Math.pow(Math.max(0, ad - 66), 2);   // 2026-11-04 폭 확장: 경계를 6m씩 바깥으로(PX도 +6 → 왼쪽 둑 절대 위치는 그대로)
+const pipeW = z => ss(PIPE.z0, PIPE.z0 + 14, z) * (1 - ss(PIPE.z1 - 14, PIPE.z1, z));
+function pipeShape(ad) {
+  if (ad < PIPE.F) return 0;
+  if (ad < PIPE.lip) return PIPE.R - Math.sqrt(Math.max(0, PIPE.R * PIPE.R - Math.pow(ad - PIPE.F, 2)));
+  return PIPE.CAP * (1 - ss(16, 22, ad));                          // 데크, 바깥쪽으로 완만하게 내려감
+}
+function parkExtra(d, z) {
+  let h = 0; const ad = Math.abs(d);
+  for (const t of TABLES) {
+    const u = z - t.z; if (u < 0 || u > t.ramp + t.top + t.land) continue;
+    const lat = 1 - ss(t.half, t.half + 1 + t.h, ad); if (lat <= 0) continue;
+    const prof = u < t.ramp ? Math.pow(u / t.ramp, 2.4) : u < t.ramp + t.top ? 1 : 1 - ss(0, 1, (u - t.ramp - t.top) / t.land);   // 도약대 끝 각도 ≈ 30°
+    h += t.h * prof * lat;
+  }
+  for (const j of JIBS) {                                          // 진입 램프: 4m 동안 hb까지 올라가 레일·박스 윗면과 만난다
+    const u = z - j.z; if (u < -4 || u > 0.6) continue;
+    const lat = 1 - ss(j.w / 2 + 1.0, j.w / 2 + 1.9, Math.abs(d - j.d)); if (lat <= 0) continue;   // 램프 윗면 폭을 넉넉히(가장자리로 들어가도 옆으로 밀려나지 않게)
+    h += j.hb * (u <= 0 ? ss(-4, 0, u) : 1 - ss(0, 0.6, u)) * lat;
+  }
+  return h;
+}
+function H(x, z) {
+  const base = 118 * (1 - ss(-420, 330, z));
+  const w = ss(-340, -220, z) * (1 - ss(240, 320, z));
+  const roll = w * (4.5 * Math.sin(z * 0.035) + 2.5 * Math.sin(z * 0.071 + 2));
+  const dx = x - xc(z), adx = Math.abs(dx);
+  const bowl = 0.0011 * dx * dx + 0.012 * Math.pow(Math.max(0, adx - 85), 2);
+  const mog = w * (0.55 * Math.sin(x * 0.16 + z * 0.09) * Math.sin(z * 0.13 - x * 0.07) + 0.35 * Math.sin(x * 0.09 - z * 0.21 + 1));
+  const wall = 0.03 * Math.pow(Math.max(0, -390 - z), 2) + 0.03 * Math.pow(Math.max(0, z - 390), 2);
+  const hm = base + roll + bowl + mog + kickers(z, dx);            // 메인 슬로프
+  const d = x - PX, ad = Math.abs(d);
+  let hp = base + parkBowl(ad) + roll * ss(30, 50, ad);            // 파크: 펜스 안은 굴곡 없이, 바깥 능선만 메인과 같이 출렁인다
+  if (ad < 26) { const pw = pipeW(z); if (pw > 0) hp += pw * Math.max(0, pipeShape(ad) - parkBowl(ad)); hp += parkExtra(d, z); }
+  let h = smin(hm, hp, 4);                                          // 두 골짜기 사이는 리프트가 지나는 능선
+  const wP = 1 - ss(30, 40, ad); if (wP > 0) h = lerp(h, hp, wP);  // 파크 둑(중심 ±24m)은 메인 지형이 낮아도 무너지지 않게
+  const bz = ss(300, 340, z);
+  if (bz > 0) {                                                     // 베이스캠프: 두 슬로프 끝을 하나의 평지로 잇는다
+    const c = xc(z), out = Math.max(0, c + 12 - x, x - (PX - 12));
+    // 예전엔 평지 높이에 (1 − bz)·60을 더해 smin으로 섞었는데, 그러면 능선(2~7m)이 z 330~338 사이 8m 안에 뚝 떨어져(경사 약 50°) 보이지 않는 벽처럼 막혔다.
+    // 이제 평지와의 차이를 bz로 천천히 섞어 40m에 걸쳐 완만하게 내려간다(z ≥ 340은 이전과 같다).
+    h = lerp(h, smin(h, base + 0.02 * out * out, 3), bz);
+  }
+  return h + wall;
+}
+function N(x, z, out) {
+  const e = 0.6;
+  out.set(-(H(x + e, z) - H(x - e, z)) / (2 * e), 1, -(H(x, z + e) - H(x, z - e)) / (2 * e)).normalize();
+  return out;
+}
+
+/* ───────── 렌더러 / 장면 / 빛 ───────── */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.74;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const FOG_HEX = 0xdce7f2;                       // 안개는 톤매핑 뒤에 섞이므로 화면 색 그대로
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(FOG_HEX, 90, 520);
+const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 1600);
+
+const SUN_DIR = v3(-0.5, 0.5, -0.7).normalize();
+scene.add(new THREE.HemisphereLight(C('#cfe0f4'), C('#93a9c4'), 1.0));
+const sun = new THREE.DirectionalLight(C('#ffeed6'), 2.3);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -55, right: 55, top: 55, bottom: -55, near: 1, far: 320 });
+sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.45;
+scene.add(sun, sun.target);
+
+/* 하늘: 화면 색으로 직접 칠하는 그라데이션 + 해 */
+const sky = new THREE.Mesh(new THREE.SphereGeometry(1000, 32, 16), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false, toneMapped: false,
+  uniforms: { top: { value: new THREE.Color(0x4f86c0) }, mid: { value: new THREE.Color(0x9cc0e2) }, hor: { value: new THREE.Color(FOG_HEX) }, sunC: { value: new THREE.Color(0xfff1d8) }, sunDir: { value: SUN_DIR } },
+  vertexShader: 'varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: [
+    'uniform vec3 top; uniform vec3 mid; uniform vec3 hor; uniform vec3 sunC; uniform vec3 sunDir; varying vec3 vD;',
+    'void main(){ vec3 d = normalize(vD); float h = d.y;',
+    ' vec3 c = mix(hor, mid, smoothstep(0.0, 0.22, h)); c = mix(c, top, smoothstep(0.18, 0.85, h));',
+    ' float s = max(dot(d, sunDir), 0.0);',
+    ' c += sunC * (pow(s, 900.0) * 1.4 + pow(s, 40.0) * 0.22 + pow(s, 6.0) * 0.10) * smoothstep(-0.05, 0.05, h);',
+    ' if (h < 0.0) c = hor;',
+    ' gl_FragColor = vec4(c, 1.0); }'].join('\n')
+}));
+sky.renderOrder = -1; sky.frustumCulled = false; scene.add(sky);
+
+/* 면 단위 색칠 */
+function facet(geo, fn) {
+  const g = geo.index ? geo.toNonIndexed() : geo;
+  const p = g.attributes.position, n = p.count, col = new Float32Array(n * 3);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), cen = new THREE.Vector3(), nor = new THREE.Vector3(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), out = new THREE.Color();
+  for (let i = 0; i < n; i += 3) {
+    a.fromBufferAttribute(p, i); b.fromBufferAttribute(p, i + 1); c.fromBufferAttribute(p, i + 2);
+    cen.copy(a).add(b).add(c).divideScalar(3);
+    e1.subVectors(b, a); e2.subVectors(c, a); nor.crossVectors(e1, e2).normalize();
+    fn(cen, nor, out);
+    for (let k = 0; k < 3; k++) { col[(i + k) * 3] = out.r; col[(i + k) * 3 + 1] = out.g; col[(i + k) * 3 + 2] = out.b; }
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.deleteAttribute('uv');
+  g.computeVertexNormals();
+  return g;
+}
+function merge(list) {
+  let n = 0; list.forEach(g => n += g.attributes.position.count);
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  let o = 0;
+  list.forEach(g => { pos.set(g.attributes.position.array, o * 3); nor.set(g.attributes.normal.array, o * 3); col.set(g.attributes.color.array, o * 3); o += g.attributes.position.count; });
+  const m = new THREE.BufferGeometry();
+  m.setAttribute('position', new THREE.BufferAttribute(pos, 3)); m.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); m.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return m;
+}
+const solid = (geo, col) => facet(geo, (c, n, o) => o.copy(col));
+const U = { uTime: { value: 0 } };
+
+/* ───────── 눈 지형 (결, 미세 요철, 반짝임) ───────── */
+const GLSL_NOISE = [
+  'float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }',
+  'float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);',
+  '  return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), u.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), u.x), u.y); }',
+  'float sbump(vec2 p){ return vnoise(p * 0.3) * 0.9 + vnoise(p * 1.1) * 0.3 + vnoise(p * 3.7) * 0.06; }'
+].join('\n');
+const SNOW_COLOR = [
+  'float sDist = length(vW - cameraPosition);',
+  'float sDx = vW.x - (22.0 * sin(vW.z * 0.011 + 0.5) + 9.0 * sin(vW.z * 0.029 + 1.3));',
+  'float sPiste = 1.0 - smoothstep(20.0, 30.0, abs(sDx));',
+  'float sDp = vW.x - ' + PX.toFixed(1) + ';',                    // 파크도 정설 줄무늬(코듀로이)
+  'float sPk = (1.0 - smoothstep(11.0, 15.0, abs(sDp))) * step(-372.0, vW.z) * step(vW.z, 330.0);',
+  'float sLc = mix(sDx, sDp, step(sPiste, sPk));',
+  'sPiste = max(sPiste, sPk);',
+  'float sNear = 1.0 - smoothstep(10.0, 40.0, sDist);',
+  'float sLane = 0.5 + 0.5 * sin(sLc * 6.2832 / 1.8);',
+  'float sRib = 0.5 + 0.5 * sin(sLc * 6.2832 / 0.16);',
+  'diffuseColor.rgb *= 1.0 - sPiste * (0.035 * sLane * (1.0 - smoothstep(60.0, 170.0, sDist)) + 0.05 * sRib * sNear);',
+  'diffuseColor.rgb *= 0.965 + 0.05 * vnoise(vW.xz * 0.015);',
+  'float sSteep = smoothstep(0.88, 0.6, vNormalW.y);',
+  'diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.78, 0.86, 0.97), sSteep);'
+].join('\n');
+const SNOW_NORMAL = [
+  '{ vec2 sp = vW.xz; float e = 0.12;',
+  '  float b0 = sbump(sp), bx = sbump(sp + vec2(e, 0.0)), bz = sbump(sp + vec2(0.0, e));',
+  '  float k = (1.0 - smoothstep(25.0, 120.0, sDist)) * (0.42 - 0.26 * sPiste);',
+  '  vec3 gW = vec3((bx - b0) / e, 0.0, (bz - b0) / e) * k;',
+  '  normal = normalize(normal - (viewMatrix * vec4(gW, 0.0)).xyz); }'
+].join('\n');
+const SNOW_SPARKLE = [
+  '{ vec2 cell = floor(vW.xz * 6.0); float r = h21(cell);',
+  '  vec3 rn = normalize(vec3(h21(cell + 3.1) - 0.5, 0.9, h21(cell + 7.7) - 0.5));',
+  '  vec3 V = normalize(cameraPosition - vW);',
+  '  float spk = step(0.9, r) * pow(max(dot(rn, normalize(uSun + V)), 0.0), 180.0) * (1.0 - smoothstep(6.0, 40.0, sDist));',
+  '  gl_FragColor.rgb += vec3(spk * 2.5); }'
+].join('\n');
+{
+  const tg = new THREE.PlaneGeometry(460, 860, 230, 430);
+  tg.rotateX(-Math.PI / 2);
+  const pa = tg.attributes.position, na = tg.attributes.normal, nv = new THREE.Vector3();
+  for (let i = 0; i < pa.count; i++) {
+    const x = pa.getX(i), z = pa.getZ(i);
+    pa.setY(i, H(x, z)); N(x, z, nv); na.setXYZ(i, nv.x, nv.y, nv.z);
+  }
+  tg.deleteAttribute('uv');
+  // 파크 구역은 아래의 고해상도 패치가 그린다. 격자 선(2m 간격)과 패치 경계가 정확히 맞으므로 그 안의 삼각형만 뺀다.
+  { const ia = tg.index.array, keep = [];
+    for (let t = 0; t < ia.length; t += 3) {
+      const a = ia[t], b = ia[t + 1], c = ia[t + 2], cx = (pa.getX(a) + pa.getX(b) + pa.getX(c)) / 3, cz = (pa.getZ(a) + pa.getZ(b) + pa.getZ(c)) / 3;
+      if (cx > PX - PW && cx < PX + PW && cz > PZ0 && cz < PZ1) continue;
+      keep.push(a, b, c);
+    }
+    tg.setIndex(keep); }
+  const mat = new THREE.MeshStandardMaterial({ color: C('#f3f7fc'), roughness: 0.84, metalness: 0 });
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.uSun = { value: SUN_DIR };
+    sh.vertexShader = 'varying vec3 vW;\nvarying vec3 vNormalW;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n vW = (modelMatrix * vec4(transformed, 1.0)).xyz;\n vNormalW = normalize(mat3(modelMatrix) * objectNormal);');
+    sh.fragmentShader = 'varying vec3 vW;\nvarying vec3 vNormalW;\nuniform vec3 uSun;\n' + GLSL_NOISE + '\n' + sh.fragmentShader
+      .replace('#include <color_fragment>', '#include <color_fragment>\n' + SNOW_COLOR)
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + SNOW_NORMAL)
+      .replace('#include <tonemapping_fragment>', SNOW_SPARKLE + '\n#include <tonemapping_fragment>');
+  };
+  const mesh = new THREE.Mesh(tg, mat);
+  mesh.receiveShadow = true; mesh.frustumCulled = false; scene.add(mesh);
+
+  // 파크 패치: 가로는 바닥·하프파이프 구간 0.7m(바깥 2m), 세로는 점프대·램프 구간 0.5m(나머지 1.5m)
+  const xs = [], zs = [];
+  for (let i = 0; i < 5; i++) xs.push(PX - PW + i * 2);
+  for (let i = 0; i < 58; i++) xs.push(PX - 20 + i * 0.7);
+  for (let i = 0; i <= 5; i++) xs.push(PX + 20 + i * 2);
+  const dense = z => TABLES.some(t => z > t.z - 2 && z < t.z + t.ramp + t.top + t.land + 2) || JIBS.some(j => z > j.z - 5 && z < j.z + 1.5);
+  for (let z = PZ0; ; ) { zs.push(z); if (z >= PZ1) break; z = Math.min(PZ1, z + (dense(z) ? 0.5 : 1.5)); }
+  const nx = xs.length, nz = zs.length, pos = new Float32Array(nx * nz * 3), nor = new Float32Array(nx * nz * 3), idx = [];
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    const k = (j * nx + i) * 3, x = xs[i], z = zs[j];
+    pos[k] = x; pos[k + 1] = H(x, z); pos[k + 2] = z; N(x, z, nv); nor[k] = nv.x; nor[k + 1] = nv.y; nor[k + 2] = nv.z;
+    if (i < nx - 1 && j < nz - 1) { const a = j * nx + i, b = a + nx; idx.push(a, b, a + 1, b, b + 1, a + 1); }
+  }
+  const pg = new THREE.BufferGeometry();
+  pg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); pg.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); pg.setIndex(idx);
+  const park = new THREE.Mesh(pg, mat); park.receiveShadow = true; scene.add(park);
+}
+
+/* ───────── 먼 산 (두 겹, 멀수록 흐리게) ───────── */
+{
+  const R = rng(21), haze = C('#dce7f2'), rockC = C('#6c86a3'), snowC = C('#f4f8fd'), shadeC = C('#9fb5cf');
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false, toneMapped: false });
+  [[26, 650, 90, 0.42, 0.8], [34, 840, 110, 0.62, 1.2]].forEach(([cnt, rad, spread, hz, hs]) => {
+    for (let i = 0; i < cnt; i++) {
+      const ang = (i / cnt) * Math.PI * 2 + R() * 0.2, dist = rad + R() * spread;
+      const h = (150 + R() * 230) * hs, r = h * (0.85 + R() * 0.55);
+      const cg = new THREE.ConeGeometry(r, h, 9, 4, true);
+      const p = cg.attributes.position;
+      for (let k = 0; k < p.count; k++) {
+        const x = p.getX(k), y = p.getY(k), z = p.getZ(k); if (y > h / 2 - 1) continue;
+        const j = 0.82 + 0.36 * hash3(Math.round(x), Math.round(y), Math.round(z) + i);
+        p.setXYZ(k, x * j, y + (hash3(Math.round(z), Math.round(x), i) - 0.5) * h * 0.08, z * j);
+      }
+      cg.rotateY(R() * 6.28);
+      const g = facet(cg, (cen, nor, out) => {
+        const lit = clamp(nor.dot(SUN_DIR) * 0.6 + 0.45, 0, 1), fr = (cen.y + h / 2) / h;
+        const snowy = ss(0.42, 0.6, fr + (hash2(cen.x, cen.z) - 0.5) * 0.18) * ss(-0.1, 0.4, nor.y);
+        out.copy(rockC).lerp(shadeC, 0.35).multiplyScalar(0.7 + 0.5 * lit).lerp(snowC.clone().lerp(shadeC, 0.55 * (1 - lit)), snowy).lerp(haze, hz);
+      });
+      const m = new THREE.Mesh(g, mat);
+      m.position.set(Math.cos(ang) * dist, -60 + h / 2, Math.sin(ang) * dist);
+      scene.add(m);
+    }
+  });
+}
+
+/* ───────── 나무 ───────── */
+function pineGeo(seed) {
+  const R = rng(seed), parts = [];
+  const bark = C('#4e3a2c'), greens = [C('#2a5747'), C('#24503f'), C('#30614f')], under = C('#173a2f'), snow = C('#eef4fb');
+  const trunk = new THREE.CylinderGeometry(0.16, 0.28, 1.8, 6); trunk.translate(0, 0.9, 0); parts.push(solid(trunk, bark));
+  const tiers = 4 + ((R() * 2) | 0);
+  for (let t = 0; t < tiers; t++) {
+    const f = t / tiers, r = lerp(2.6, 0.95, f) * (0.92 + R() * 0.16), h = lerp(2.6, 1.9, f), y0 = 0.95 + t * lerp(1.2, 0.95, f);
+    const jk = [], jd = []; for (let k = 0; k <= 10; k++) { jk.push(0.8 + R() * 0.4); jd.push(R() * 0.5); } jk[10] = jk[0]; jd[10] = jd[0];
+    const g = new THREE.ConeGeometry(r, h, 10, 2);
+    const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i), rad = Math.hypot(x, z);
+      const idx = Math.round(((Math.atan2(x, z) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * 10) % 10;
+      if (y < -h / 2 + 0.01) { if (rad > 0.01) { p.setX(i, x * jk[idx]); p.setZ(i, z * jk[idx]); p.setY(i, y - jd[idx]); } else p.setY(i, y - 0.35); }
+      else if (Math.abs(y) < 0.01 && rad > 0.01) { const k = 0.9 + 0.1 * jk[idx]; p.setX(i, x * k); p.setZ(i, z * k); }
+    }
+    g.translate(0, y0 + h / 2, 0);
+    const gc = greens[(R() * 3) | 0];
+    parts.push(facet(g, (c, n, o) => {
+      if (n.y < -0.2) { o.copy(under); return; }
+      const fr = (c.y - y0) / h;
+      o.copy(fr > 0.5 + (hash2(c.x * 7, c.z * 7) - 0.5) * 0.35 ? snow : gc);
+    }));
+  }
+  return merge(parts);
+}
+// 충돌체: 원 {x,z,r} 또는 축 정렬 상자 {x,z,hx,hz}. top(절대 높이)을 주면 그보다 높이 뜬 상태에서는 넘어간다.
+// top이 없으면 지면 위 2.2m까지만 부딪힌다(나무·바위).
+const trees = [], obst = [], grid = new Map();
+function addObst(o) { const k = Math.floor(o.x / 12) + ',' + Math.floor(o.z / 12); (grid.get(k) || grid.set(k, []).get(k)).push(obst.length); obst.push(o); }
+{
+  const R = rng(7), nv = new THREE.Vector3();
+  let tries = 0;
+  while (trees.length < 900 && tries++ < 30000) {
+    const z = lerp(-405, 385, R()), dx = (R() * 2 - 1) * 122, x = xc(z) + dx, adx = Math.abs(dx);
+    const cl = 0.5 + 0.5 * Math.sin(z * 0.045 + dx * 0.05) * Math.sin(z * 0.021 - dx * 0.04 + 2);
+    if (R() > ss(25, 50, adx) * (0.25 + 0.75 * cl)) continue;
+    if (z < Z_START + 30 && adx < 48) continue;
+    if (z > 295 && adx < 72) continue;
+    if (Math.abs(dx - LIFT_DX) < 8) continue;
+    if (x > PX - 24) continue;                                     // 파크 안쪽(펜스 안)은 비운다
+    if (z < -300 && x > xc(z) + LIFT_DX - 8) continue;             // 상부 정류장 → 스노우 파크로 건너가는 길
+    if (z > 300 && x > xc(z) - 72 && x < PX + 36) continue;        // 베이스캠프 평지
+    if (N(x, z, nv).y < 0.82) continue;
+    trees.push({ x, z, s: lerp(0.85, 1.7, R()), v: (R() * 3) | 0 });
+  }
+  // 파크 오른쪽 둑의 숲
+  for (let added = 0, t2 = 0; added < 260 && t2 < 12000; t2++) {
+    const z = lerp(-405, 385, R()), d = lerp(24, 68, R()), x = PX + d;
+    const cl = 0.5 + 0.5 * Math.sin(z * 0.045 + d * 0.05) * Math.sin(z * 0.021 - d * 0.04 + 2);
+    if (R() > ss(24, 32, d) * (0.3 + 0.7 * cl)) continue;
+    if (z > 300 && d < 36) continue;
+    if (N(x, z, nv).y < 0.82) continue;
+    trees.push({ x, z, s: lerp(0.85, 1.7, R()), v: (R() * 3) | 0 }); added++;
+  }
+  for (let z = -290; z < 280; z += lerp(24, 50, R())) trees.push({ x: xc(z) + (R() * 2 - 1) * 16, z, s: lerp(1.0, 1.5, R()), v: (R() * 3) | 0 });
+  trees.forEach(t => addObst({ x: t.x, z: t.z, r: 0.8 * t.s }));
+}
+function instanced(geo, mat, n) { const m = new THREE.InstancedMesh(geo, mat, n); m.frustumCulled = false; m.castShadow = true; scene.add(m); return m; }
+function swayMat(params) {
+  const m = new THREE.MeshStandardMaterial(params);
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uTime = U.uTime;
+    sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', [
+      '#include <begin_vertex>',
+      '#ifdef USE_INSTANCING',
+      ' float swH = max(0.0, position.y - 1.2);',
+      ' transformed.x += sin(uTime * 1.1 + instanceMatrix[3].x * 0.3 + instanceMatrix[3].z * 0.2) * 0.022 * swH;',
+      ' transformed.z += cos(uTime * 0.9 + instanceMatrix[3].z * 0.3) * 0.016 * swH;',
+      '#endif'].join('\n'));
+  };
+  return m;
+}
+{
+  const d = new THREE.Object3D(), R = rng(99);
+  const mat = swayMat({ vertexColors: true, flatShading: true, roughness: 0.92 });
+  [0, 1, 2].forEach(vi => {
+    const list = trees.filter(t => t.v === vi); if (!list.length) return;
+    const m = instanced(pineGeo(11 + vi * 7), mat, list.length);
+    list.forEach((t, i) => { d.position.set(t.x, H(t.x, t.z) - 0.2, t.z); d.rotation.set(0, R() * 6.28, 0); d.scale.set(t.s * (0.92 + R() * 0.16), t.s, t.s * (0.92 + R() * 0.16)); d.updateMatrix(); m.setMatrixAt(i, d.matrix); });
+  });
+}
+
+/* ───────── 바위 ───────── */
+{
+  const R = rng(5), d = new THREE.Object3D(), rocks = [], nv = new THREE.Vector3();
+  let tries = 0;
+  while (rocks.length < 90 && tries++ < 4000) {
+    const z = lerp(-400, 385, R()), dx = (R() < 0.5 ? -1 : 1) * lerp(40, 118, R()), x = xc(z) + dx;
+    if (Math.abs(dx - LIFT_DX) < 6) continue;
+    if (x > PX - 26 || (z > 300 && x > xc(z)) || (z < -300 && x > xc(z) + LIFT_DX - 8)) continue;            // 파크·베이스캠프 평지에는 바위를 두지 않는다
+    if (N(x, z, nv).y > 0.93 && R() < 0.75) continue;
+    rocks.push({ x, z, s: lerp(0.6, 2.4, R()) });
+  }
+  const g = new THREE.IcosahedronGeometry(1, 1), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i), j = 0.75 + 0.5 * hash3(x * 3.1, y * 3.1, z * 3.1); p.setXYZ(i, x * j * 1.35, y * j * 0.8, z * j * 1.1); }
+  const rockC = C('#66727f'), snowC = C('#eef4fb');
+  const geo = facet(g, (c, n, o) => o.copy(n.y > 0.45 + (hash2(c.x * 5, c.z * 5) - 0.5) * 0.3 ? snowC : rockC));
+  const m = instanced(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95 }), rocks.length);
+  m.receiveShadow = true;
+  rocks.forEach((r, i) => { d.position.set(r.x, H(r.x, r.z) - 0.3 * r.s, r.z); d.rotation.set(R() * 0.3, R() * 6.28, R() * 0.3); d.scale.setScalar(r.s); d.updateMatrix(); m.setMatrixAt(i, d.matrix); addObst({ x: r.x, z: r.z, r: r.s * 1.1 }); });
+}
+
+/* ───────── 코스 폴 ───────── */
+{
+  const poles = [];
+  for (let z = -335; z <= 300; z += 34) { const c = xc(z); poles.push([c - 24, z, 0]); poles.push([c + 24, z, 1]); }
+  KICKS.forEach(k => { const z = k[0] + 1, c = xc(z); poles.push([c + k[1] - 8, z, 0]); poles.push([c + k[1] + 8, z, 1]); });
+  const g = new THREE.CylinderGeometry(0.05, 0.06, 2.6, 6); g.translate(0, 1.3, 0);
+  const cols = [C('#e8442c'), C('#2f6fe0')], d = new THREE.Object3D();
+  [0, 1].forEach(ci => {
+    const list = poles.filter(p => p[2] === ci);
+    const m = instanced(g, new THREE.MeshStandardMaterial({ color: cols[ci], roughness: 0.5 }), list.length);
+    list.forEach((p, i) => { d.position.set(p[0], H(p[0], p[1]) - 0.1, p[1]); d.rotation.set((hash2(p[0], p[1]) - 0.5) * 0.12, 0, (hash2(p[1], p[0]) - 0.5) * 0.12); d.updateMatrix(); m.setMatrixAt(i, d.matrix); });
+  });
+}
+
+/* ───────── 출발 아치 ───────── */
+{
+  const z = Z_START + 26, c = xc(z), g = new THREE.Group();
+  const orange = new THREE.MeshStandardMaterial({ color: C('#ff5a36'), roughness: 0.45 });
+  const navy = new THREE.MeshStandardMaterial({ color: C('#10263a'), roughness: 0.6 });
+  const base = Math.max(H(c - 9.5, z), H(c + 9.5, z)) - 0.4;
+  const arch = new THREE.Mesh(new THREE.TorusGeometry(9.5, 0.75, 14, 40, Math.PI), orange); arch.position.set(c, base, z); arch.castShadow = true; g.add(arch);
+  const ban = new THREE.Mesh(new THREE.BoxGeometry(11, 1.3, 0.18), navy); ban.position.set(c, base + 7.4, z); ban.castShadow = true; g.add(ban);
+  [-1, 1].forEach(s => { const st = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.3, 0.5, 16), orange); st.position.set(c + s * 9.5, base + 0.2, z); g.add(st); addObst({ x: c + s * 9.5, z, r: 1.2, top: base + 9 }); });
+  scene.add(g);
+}
+
+/* ───────── 리프트 (움직이는 체어) ───────── */
+const lift = { lines: [], chairs: null }, LIFT_V = 2.4;           // 케이블 속도 m/s
+const STATION_IN = 9;                                              // 정류장 앞 승하차 구간: 불휠에서 이만큼은 케이블이 낮고 평평하다
+{
+  const steel = C('#5c6672'), dark = C('#2b333d'), seatC = C('#10263a'), backC = C('#ff5a36');
+  const towers = [];
+  for (let z = -350; z <= 345; z += 52) { const x = xc(z) + LIFT_DX; towers.push(v3(x, H(x, z), z)); }
+  const tParts = [];
+  { const col = new THREE.CylinderGeometry(0.28, 0.42, 10, 8); col.translate(0, 5, 0); tParts.push(solid(col, steel)); }
+  { const bar = new THREE.BoxGeometry(5.2, 0.35, 0.35); bar.translate(0, 10, 0); tParts.push(solid(bar, steel)); }
+  [-2.3, 2.3].forEach(o => { const w = new THREE.CylinderGeometry(0.35, 0.35, 0.16, 12); w.rotateZ(Math.PI / 2); w.translate(o, 9.75, 0); tParts.push(solid(w, dark)); });
+  const tm = instanced(merge(tParts), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.35 }), towers.length);
+  const d = new THREE.Object3D();
+  towers.forEach((t, i) => { const nz = towers[Math.min(i + 1, towers.length - 1)], pz = towers[Math.max(i - 1, 0)]; d.position.copy(t); d.rotation.set(0, Math.atan2(nz.x - pz.x, nz.z - pz.z), 0); d.updateMatrix(); tm.setMatrixAt(i, d.matrix); addObst({ x: t.x, z: t.z, r: 0.45, top: t.y + 10 }); });
+
+  /* 정류장: 콘크리트 기초 + 철골 다리 + 후드(불휠 덮개) + 도는 불휠 + 나무 승하차장 + 뒤 울타리 + 운영실 + 간판.
+     로컬 +z = 케이블이 나가는 방향. 하부 정류장은 그룹을 180° 돌려서 같은 모델을 쓴다. */
+  const stations = [], WHEEL_Y = 3.2, TOPY = WHEEL_Y + 0.45;     // 불휠 높이(의자 좌석 ≈ 1.15m), 후드 바닥
+  lift.wheels = [];
+  const orange = C('#ff5a36'), navy = C('#10263a'), white = C('#e9edf1'), concrete = C('#9aa3ad'), woodA = C('#8a5a3a'), woodB = C('#74492e'), snowC = C('#f2f6fb'), yellow = C('#ffc531');
+  const stMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.08 });
+  const glowMat = new THREE.MeshStandardMaterial({ vertexColors: true, emissive: C('#ffb347'), emissiveIntensity: 1.2, roughness: 0.35 });
+  const wheelMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.45 });
+  [[-378, 1, '상부'], [370, -1, '하부']].forEach(([z, s, label]) => {
+    const x = xc(z) + LIFT_DX, y = H(x, z), g = new THREE.Group();
+    const W = (lx, lz) => [x + s * lx, z + s * lz];               // 로컬 → 월드 (x, z)
+    const gl = (lx, lz) => { const p = W(lx, lz); return H(p[0], p[1]) - y; };   // 로컬 지점의 지면 높이(정류장 기준)
+    const obstAt = (lx, lz, o) => { const p = W(lx, lz); addObst(Object.assign({ x: p[0], z: p[1] }, o)); };   // 하부는 180° 돌려도 대칭이라 rot 불필요
+    const parts = [], glows = [], m4 = new THREE.Matrix4(), eu = new THREE.Euler();
+    const put = (geo, col, px, py, pz, rx, ry, rz, list) => { m4.makeRotationFromEuler(eu.set(rx || 0, ry || 0, rz || 0)); m4.setPosition(px, py, pz); geo.applyMatrix4(m4); (list || parts).push(solid(geo, col)); };
+    const box = (w, h, d, col, px, py, pz, rx, ry, rz, list) => put(new THREE.BoxGeometry(w, h, d), col, px, py, pz, rx, ry, rz, list);
+    const slab = (w, l, r, d, col, py, bev) => { const ge = new THREE.ExtrudeGeometry(roundedRect(w, l, r), { depth: d, bevelEnabled: !!bev, bevelThickness: bev || 0, bevelSize: bev || 0, bevelSegments: 2, curveSegments: 10 }); ge.rotateX(-Math.PI / 2); put(ge, col, 0, py, 0.3); };
+
+    // 다리 4개 + 기초 + 가새 + 상부 보
+    const LX = 3.7, LZ = [-3, 3.4];
+    [-1, 1].forEach(sx => {
+      LZ.forEach(lz => { const gy = gl(sx * LX, lz); box(1, 1.6, 1, concrete, sx * LX, gy - 0.6, lz); box(0.36, TOPY - gy, 0.36, steel, sx * LX, (TOPY + gy) / 2, lz); obstAt(sx * LX, lz, { r: 0.55, top: y + TOPY + 2 }); });
+      const gm = (gl(sx * LX, LZ[0]) + gl(sx * LX, LZ[1])) / 2, sp = LZ[1] - LZ[0], hh = TOPY - 0.5 - (gm + 0.7), L = Math.hypot(sp, hh), a = Math.atan2(hh, sp);
+      [a, -a].forEach(r => box(0.13, 0.13, L, steel, sx * LX, gm + 0.7 + hh / 2, (LZ[0] + LZ[1]) / 2, r));
+      box(0.4, 0.4, sp + 0.4, steel, sx * LX, TOPY - 0.2, (LZ[0] + LZ[1]) / 2);
+    });
+    LZ.forEach(lz => box(LX * 2 + 0.4, 0.4, 0.4, steel, 0, TOPY - 0.2, lz));
+    { const sh = new THREE.CylinderGeometry(0.28, 0.28, 0.5, 10); put(sh, dark, 0, TOPY - 0.2, 0); }
+
+    // 후드: 남색 띠 → 주황 몸체 + 흰 줄 → 남색 지붕 → 눈
+    slab(8.15, 9.55, 3.05, 0.25, navy, TOPY - 0.05);
+    slab(8.0, 9.4, 3.0, 1.3, orange, TOPY + 0.2);
+    slab(8.06, 9.46, 3.03, 0.14, white, TOPY + 0.95);
+    slab(7.4, 8.8, 2.7, 0.3, navy, TOPY + 1.5);
+    slab(7.0, 8.4, 2.5, 0.2, snowC, TOPY + 1.8, 0.1);
+    [-1.3, 1.3].forEach(px => box(0.7, 0.18, 0.3, white, px, TOPY - 0.12, 4.85, 0, 0, 0, glows));   // 앞쪽 조명
+
+    // 간판(후드 위, 케이블 쪽을 본다)
+    const SY = TOPY + 3.0, SZ = 2.8;
+    [-1.6, 1.6].forEach(px => box(0.14, SY - TOPY - 2.0, 0.14, steel, px, (SY + TOPY + 2.0) / 2 - 0.3, SZ - 0.1));
+    box(4.4, 1.2, 0.14, navy, 0, SY, SZ);
+    {
+      const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128;
+      const tex = new THREE.CanvasTexture(cv); tex.encoding = THREE.sRGBEncoding; tex.anisotropy = 4;
+      const draw = () => {
+        const c2 = cv.getContext('2d');
+        c2.fillStyle = '#10263a'; c2.fillRect(0, 0, 512, 128); c2.fillStyle = '#ff5a36'; c2.fillRect(0, 0, 22, 128);
+        c2.textBaseline = 'middle'; c2.textAlign = 'left'; c2.fillStyle = '#f4f8fc'; c2.font = '700 84px "Barlow Condensed", sans-serif'; c2.fillText('LIFT 1', 50, 70);
+        c2.textAlign = 'right'; c2.fillStyle = '#ffb347'; c2.font = '700 40px "Noto Sans KR", sans-serif'; c2.fillText(label + ' 정류장', 488, 68);
+        tex.needsUpdate = true;
+      };
+      draw(); if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
+      const sg = new THREE.Mesh(new THREE.PlaneGeometry(4.25, 1.06), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+      sg.position.set(0, SY, SZ + 0.075); g.add(sg);
+    }
+
+    // 승하차장: 지면 기울기에 맞춘 나무 판재 + 노란 승차선
+    const ax = (gl(4.2, 0.5) - gl(-4.2, 0.5)) / 8.4, rz = Math.atan(ax);
+    for (let i = 0; i < 12; i++) { const pz = -3.8 + i * 0.8; box(8.4, 0.14, 0.74, i % 2 ? woodA : woodB, 0, gl(0, pz) + 0.05, pz, 0, 0, rz); }
+    box(8.4, 0.03, 0.22, yellow, 0, gl(0, 3.0) + 0.135, 3.0, 0, 0, rz);
+
+    // 뒤 울타리(불휠 뒤쪽)
+    const FZ = -4.6, fy = gl(0, FZ);
+    // 하차 쪽(로컬 −x, 도착 줄 쪽) 절반은 비워 둔다: 내린 보더가 불휠 옆을 지나 이 출구로 빠져나간다
+    for (let i = 3; i < 7; i++) { const px = -3.9 + i * 1.3, py = gl(px, FZ); box(0.14, 1.3, 0.14, steel, px, py + 0.55, FZ); }
+    { const fyc = gl(1.95, FZ); box(4.0, 0.12, 0.12, orange, 1.95, fyc + 1.12, FZ, 0, 0, rz); box(4.0, 0.08, 0.08, steel, 1.95, fyc + 0.6, FZ, 0, 0, rz); }
+    obstAt(1.95, FZ, { hx: 2.15, hz: 0.25, top: y + fy + 1.3 });
+
+    // 운영실(리프트 맨 옆): 흰 벽, 남색 모서리, 따뜻한 창, 문, 평지붕 + 눈, 연통
+    const HX = -6.4, HZ = 1.2, hy = Math.min(gl(HX - 1.6, HZ - 1.9), gl(HX + 1.6, HZ - 1.9), gl(HX - 1.6, HZ + 1.9), gl(HX + 1.6, HZ + 1.9));
+    const hb = hy + 0.35, hw = 3.2, hd = 3.8, hh2 = 2.6;
+    box(hw + 0.3, 1.4, hd + 0.3, concrete, HX, hb - 0.7, HZ);
+    box(hw, hh2, hd, white, HX, hb + hh2 / 2, HZ);
+    [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(([a, b]) => box(0.18, hh2, 0.18, navy, HX + a * hw / 2, hb + hh2 / 2, HZ + b * hd / 2));
+    box(0.08, 1.2, 2.9, navy, HX + hw / 2 + 0.01, hb + 1.55, HZ); box(0.08, 1.0, 2.7, white, HX + hw / 2 + 0.03, hb + 1.55, HZ, 0, 0, 0, glows);   // 리프트 쪽 큰 창
+    box(1.8, 1.1, 0.08, navy, HX, hb + 1.6, HZ + hd / 2 + 0.01); box(1.6, 0.9, 0.08, white, HX, hb + 1.6, HZ + hd / 2 + 0.03, 0, 0, 0, glows);     // 케이블 쪽 창
+    box(0.95, 2.05, 0.08, woodB, HX + 0.6, hb + 1.03, HZ - hd / 2 - 0.02); box(0.9, 0.7, 0.08, navy, HX - 0.8, hb + 1.7, HZ - hd / 2 - 0.02);
+    box(0.7, 0.5, 0.06, white, HX - 0.8, hb + 1.7, HZ - hd / 2 - 0.05, 0, 0, 0, glows);
+    box(hw + 0.8, 0.3, hd + 0.8, navy, HX, hb + hh2 + 0.15, HZ); box(hw + 0.6, 0.28, hd + 0.6, snowC, HX, hb + hh2 + 0.44, HZ);
+    { const pipe = new THREE.CylinderGeometry(0.12, 0.12, 1.1, 8); put(pipe, dark, HX - 0.8, hb + hh2 + 0.9, HZ - 0.9); }
+    obstAt(HX, HZ, { hx: hw / 2 + 0.15, hz: hd / 2 + 0.15, top: y + hb + hh2 + 0.6 });
+
+    // 불휠(돈다): 테 + 바퀴살 12개 + 허브 + 주황 표시
+    const wp = [];
+    { const t = new THREE.TorusGeometry(2.3, 0.15, 6, 36); t.rotateX(Math.PI / 2); wp.push(solid(t, dark)); }
+    for (let i = 0; i < 6; i++) { const sp = new THREE.BoxGeometry(4.5, 0.09, 0.12); sp.rotateY(i * Math.PI / 6); wp.push(solid(sp, steel)); }
+    { const hub = new THREE.CylinderGeometry(0.45, 0.45, 0.4, 12); wp.push(solid(hub, dark)); }
+    for (let i = 0; i < 3; i++) { const mk = new THREE.BoxGeometry(0.34, 0.34, 0.34); mk.translate(2.3 * Math.cos(i * 2.094), 0, 2.3 * Math.sin(i * 2.094)); wp.push(solid(mk, orange)); }
+    const wh = new THREE.Mesh(merge(wp), wheelMat); wh.position.y = WHEEL_Y; wh.castShadow = true; g.add(wh); lift.wheels.push(wh);
+
+    const sm = new THREE.Mesh(merge(parts), stMat); sm.castShadow = true; sm.receiveShadow = true; g.add(sm);
+    g.add(new THREE.Mesh(merge(glows), glowMat));
+    g.position.set(x, y, z); g.rotation.y = s > 0 ? 0 : Math.PI; scene.add(g);
+    stations.push(v3(x, y + WHEEL_Y, z));
+  });
+  const lineMat = new THREE.LineBasicMaterial({ color: C('#28313b') });
+  [-2.3, 2.3].forEach((o, li) => {
+    // 승하차 구간: 불휠에서 정류장 방향(z축)으로 STATION_IN 지점까지 케이블을 곧고 낮게 들인다(그 뒤 기둥 쪽으로 꺾인다)(좌석이 지면 위 약 0.8m — 하차 램프 높이).
+    // 예전엔 정류장을 나서자마자 기둥 쪽으로 올라가서, 하차 지점 좌석이 땅에서 2.4~3.1m 위였다.
+    const entry = (st, tw) => { const d = v3(0, 0, Math.sign(tw.z - st.z)), p = st.clone().add(v3(o, 0, 0)).addScaledVector(d, STATION_IN); p.y = Math.min(st.y, H(p.x, p.z) + 2.8); return p; };
+    const pts = [stations[0].clone().add(v3(o, 0, 0)), entry(stations[0], towers[0])].concat(towers.map(t => v3(t.x + o, t.y + 9.75, t.z))).concat([entry(stations[1], towers[towers.length - 1]), stations[1].clone().add(v3(o, 0, 0))]);
+    if (li === 0) pts.reverse();                                    // 한 줄은 올라가고 한 줄은 내려온다
+    const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
+    lift.lines.push({ pts, cum, len: cum[cum.length - 1] });
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
+  });
+  /* 3인승 의자. 원점 = 케이블 잡는 그립, 로컬 +z = 진행 방향(앉은 사람이 보는 쪽), 좌석 윗면 ≈ y −1.97.
+     금속(그립·행어·프레임·안전바)과 천(쿠션) 두 덩어리로 나눠 재질을 다르게 준다. */
+  const metal = [], soft = [];                                    // white·yellow는 위 정류장 색을 같이 쓴다
+  const tube = (a, b, r, col, list) => {
+    const d = new THREE.Vector3().subVectors(b, a), L = d.length(), g = new THREE.CylinderGeometry(r, r, L, 8, 1);
+    g.translate(0, L / 2, 0);
+    g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(v3(0, 1, 0), d.normalize())));
+    g.translate(a.x, a.y, a.z); (list || metal).push(solid(g, col || steel));
+  };
+  const joint = (p, r, col) => { const s = new THREE.SphereGeometry(r, 8, 4); s.translate(p.x, p.y, p.z); metal.push(solid(s, col || steel)); };
+  const pipe = (pts, r, col, list) => { for (let i = 1; i < pts.length; i++) tube(pts[i - 1], pts[i], r, col, list); for (let i = 1; i < pts.length - 1; i++) joint(pts[i], r, col); };
+  const boxAt = (w, h, d, col, x, y, z, list) => { const b = new THREE.BoxGeometry(w, h, d); b.translate(x, y, z); (list || metal).push(solid(b, col)); };
+  const cushion = (w, l, t, col, tilt, x, y, z) => {           // 모서리 둥근 쿠션. tilt 0 = 눕힘(좌석), π/2 근처 = 세움(등받이)
+    const g = new THREE.ExtrudeGeometry(roundedRect(w, l, 0.07), { depth: t - 0.04, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 1, curveSegments: 3 });
+    g.translate(0, 0, -(t - 0.04) / 2); g.rotateX(-Math.PI / 2 + tilt); g.translate(x, y, z); soft.push(solid(g, col));
+  };
+  const CW = 1.95, HW = CW / 2, SY = -2.03, FY = -2.12;            // 의자 폭, 좌석 쿠션 중심 높이, 좌석 프레임 높이
+
+  // 그립: 케이블을 무는 몸통 + 위 롤러 2개 + 주황 덮개
+  boxAt(0.2, 0.26, 0.62, dark, 0, -0.06, 0);
+  [-0.2, 0.2].forEach(z => { const r = new THREE.CylinderGeometry(0.075, 0.075, 0.24, 10); r.rotateZ(Math.PI / 2); r.translate(0, 0.07, z); metal.push(solid(r, steel)); });
+  boxAt(0.24, 0.1, 0.34, backC, 0, -0.22, 0, soft);
+  // 행어: 그립에서 곧게 내려와 등받이 뒤로 꺾인다
+  const hTop = v3(0, -0.26, 0), hBend = v3(0, -0.95, 0), hBack = v3(0, -1.3, -0.5);
+  pipe([hTop, hBend, hBack], 0.06, steel);
+  [-1, 1].forEach(s => boxAt(0.02, 0.2, 0.26, white, s * 0.07, -0.62, 0, soft));   // 번호판(양면)
+  // 뒤 가로대 + 양옆 프레임(등받이 뒤 → 좌석 아래 → 앞)
+  tube(v3(-HW - 0.04, -1.3, -0.5), v3(HW + 0.04, -1.3, -0.5), 0.05);
+  [-1, 1].forEach(s => {
+    const x = s * (HW + 0.04);
+    pipe([v3(x, -1.3, -0.5), v3(x, FY, -0.36), v3(x, FY, 0.36), v3(x, FY - 0.08, 0.42)], 0.04);
+    pipe([v3(x, -1.72, -0.42), v3(x, -1.72, 0.22), v3(x, FY, 0.22)], 0.03, dark);   // 팔걸이
+    boxAt(0.07, 0.04, 0.42, seatC, x, -1.69, -0.02, soft);                          // 팔걸이 패드
+  });
+  tube(v3(-HW, FY, -0.36), v3(HW, FY, -0.36), 0.035); tube(v3(-HW, FY, 0.36), v3(HW, FY, 0.36), 0.035);
+  [-0.33, 0.33].forEach(x => tube(v3(x, FY, -0.36), v3(x, FY, 0.36), 0.025, dark));   // 좌석 받침
+  joint(hBack, 0.07, dark);
+  // 쿠션 3개씩: 좌석(남색) + 등받이(주황, 뒤로 12° 젖힘) + 등받이 위 흰 테
+  const n = 3, gap = 0.035, cw = (CW - gap * (n - 1)) / n, bt = 0.21;
+  for (let i = 0; i < n; i++) {
+    const x = -HW + cw / 2 + i * (cw + gap);
+    cushion(cw, 0.62, 0.12, seatC, 0, x, SY, 0.02);
+    cushion(cw, 0.62, 0.1, backC, Math.PI / 2 - bt, x, -1.66, -0.33);
+    boxAt(cw, 0.05, 0.11, white, x, -1.355, -0.39, soft);
+  }
+  // 안전바(올린 상태): 뒤쪽 축에서 내린 모양을 만든 뒤 위로 돌린다. 발판까지 같이 돈다.
+  const BAR_UP = 1.0, piv = v3(0, -1.45, -0.46), bar = [];
+  [-1, 1].forEach(s => { const x = s * (HW + 0.09); tube(v3(x, piv.y, piv.z), v3(x, -1.62, 0.5), 0.035, dark, bar); tube(v3(x, -1.62, 0.5), v3(s * 0.62, -1.62, 0.5), 0.035, dark, bar); });
+  tube(v3(-0.62, -1.62, 0.5), v3(0.62, -1.62, 0.5), 0.035, dark, bar);
+  [-0.42, 0.42].forEach(x => tube(v3(x, -1.62, 0.5), v3(x, -2.35, 0.62), 0.03, dark, bar));
+  tube(v3(-0.75, -2.35, 0.62), v3(0.75, -2.35, 0.62), 0.04, dark, bar);
+  [-0.42, 0.42].forEach(x => { const f = new THREE.BoxGeometry(0.42, 0.04, 0.2); f.translate(x, -2.37, 0.66); bar.push(solid(f, steel)); });
+  { const g = new THREE.BoxGeometry(0.3, 0.06, 0.05); g.translate(0, -1.62, 0.5); bar.push(solid(g, yellow)); }   // 손잡이 표시
+  const rideMetal = merge(metal), rideBar = merge(bar.map(g => g.clone()));   // 탑승용 의자: 안전바를 따로 떼어 내릴 수 있게(내린 상태로 만든 모양)
+  bar.forEach(g => { g.translate(-piv.x, -piv.y, -piv.z); g.rotateX(-BAR_UP); g.translate(piv.x, piv.y, piv.z); g.computeVertexNormals(); metal.push(g); });
+
+  lift.perLine = 30;
+  const metalMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.55 }), softMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
+  const softGeo = merge(soft);
+  lift.chairs = [
+    instanced(merge(metal), metalMat, lift.perLine * 2),
+    instanced(softGeo, softMat, lift.perLine * 2),
+  ];
+  // 보더가 타는 의자 한 대(평소에는 숨김). 같은 자리의 InstancedMesh 의자는 updateLift에서 숨긴다.
+  const rc = new THREE.Group(), barPivot = new THREE.Group(), barMesh = new THREE.Mesh(rideBar, metalMat);
+  rc.add(new THREE.Mesh(rideMetal, metalMat), new THREE.Mesh(softGeo, softMat), barPivot);
+  barPivot.position.copy(piv); barMesh.position.set(-piv.x, -piv.y, -piv.z); barPivot.add(barMesh);
+  rc.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  rc.visible = false; scene.add(rc);
+  lift.ride = { chair: rc, bar: barPivot, BAR_UP };
+}
+const _lp = new THREE.Vector3(), _lo = new THREE.Object3D();
+// 케이블 위 거리 s의 위치를 out에 넣고 진행 방향(y축 회전각)을 돌려준다. lines[0]이 올라가는 줄(하부 → 상부).
+function liftAt(L, s, out) {
+  s = clamp(s, 0, L.len); let k = 1;
+  while (k < L.cum.length - 1 && L.cum[k] < s) k++;
+  const a = L.pts[k - 1], b = L.pts[k], f = (s - L.cum[k - 1]) / (L.cum[k] - L.cum[k - 1] || 1);
+  out.copy(a).lerp(b, f); return Math.atan2(b.x - a.x, b.z - a.z);
+}
+function updateLift(t) {
+  lift.lines.forEach((L, li) => {
+    for (let i = 0; i < lift.perLine; i++) {
+      const s = ((i / lift.perLine) * L.len + t * LIFT_V) % L.len;
+      const yaw = liftAt(L, s, _lp);
+      _lo.position.copy(_lp); _lo.rotation.set(0, yaw, Math.sin(t * 0.8 + i) * 0.03);
+      _lo.scale.setScalar(li === RIDE.li && RIDE.chairOn && Math.abs(s - RIDE.cs) < 3.5 ? 0 : 1);   // 탑승 의자와 겹치는 의자는 숨긴다
+      _lo.updateMatrix();
+      lift.chairs.forEach(m => m.setMatrixAt(li * lift.perLine + i, _lo.matrix));
+    }
+  });
+  lift.chairs.forEach(m => { m.instanceMatrix.needsUpdate = true; });
+  const rc = lift.ride.chair; rc.visible = RIDE.chairOn;
+  if (RIDE.chairOn) { rc.rotation.set(0, liftAt(lift.lines[RIDE.li], RIDE.cs, rc.position), 0); lift.ride.bar.rotation.x = -lift.ride.BAR_UP * (1 - RIDE.bar); }
+  lift.wheels.forEach(w => { w.rotation.y = -t * LIFT_V / 2.3; });   // 케이블 속도 2.4m/s ÷ 반지름 2.3m
+}
+
+/* ───────── 베이스캠프 오두막 ───────── */
+const chimneyTop = new THREE.Vector3();
+{
+  const z = 368, x = xc(z), gy = H(x, z), g = new THREE.Group();
+  const logA = new THREE.MeshStandardMaterial({ color: C('#8a5a3a'), roughness: 0.85 }), logB = new THREE.MeshStandardMaterial({ color: C('#74492e'), roughness: 0.85 });
+  const snowM = new THREE.MeshStandardMaterial({ color: C('#f2f6fb'), roughness: 0.8 }), wood = new THREE.MeshStandardMaterial({ color: C('#5d3c27'), roughness: 0.85 });
+  const glow = new THREE.MeshStandardMaterial({ color: C('#ffd68a'), emissive: C('#ffb347'), emissiveIntensity: 1.3, roughness: 0.4 });
+  const add = (m, px, py, pz) => { m.position.set(px, py, pz); m.castShadow = true; m.receiveShadow = true; g.add(m); return m; };
+  for (let i = 0; i < 8; i++) add(new THREE.Mesh(new THREE.BoxGeometry(11 + (i % 2) * 0.3, 0.54, 7.6 + (i % 2) * 0.3), i % 2 ? logA : logB), 0, 0.28 + i * 0.56, 0);
+  const ang = Math.atan2(2.6, 3.8), slab = 4.7 / Math.cos(ang);
+  [1, -1].forEach(s => {
+    const u = add(new THREE.Mesh(new THREE.BoxGeometry(12.6, 0.18, slab), wood), 0, 7.1 - Math.sin(ang) * slab / 2, s * Math.cos(ang) * slab / 2); u.rotation.x = s * ang;
+    const t = add(new THREE.Mesh(new THREE.BoxGeometry(12.9, 0.42, slab + 0.2), snowM), 0, 7.1 - Math.sin(ang) * slab / 2 + 0.28, s * Math.cos(ang) * slab / 2); t.rotation.x = s * ang;
+  });
+  const tri = new THREE.Shape(); tri.moveTo(-3.8, 0); tri.lineTo(3.8, 0); tri.lineTo(0, 2.6); tri.closePath();
+  [-5.4, 5.1].forEach(px => { const ge = new THREE.ExtrudeGeometry(tri, { depth: 0.3, bevelEnabled: false }); ge.rotateY(Math.PI / 2); add(new THREE.Mesh(ge, logA), px, 4.5, 0); });
+  [-3, 0.2, 3.4].forEach(px => add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.3, 0.15), glow), px, 2.7, -3.9));
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.4, 2.6, 0.18), wood), -0.2 + 1.6, 1.3, -3.92).position.x = 1.7;
+  add(new THREE.Mesh(new THREE.BoxGeometry(13, 0.3, 3), wood), 0, 0.15, -5.4);
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.8, 1.1), new THREE.MeshStandardMaterial({ color: C('#6b6f75'), roughness: 0.9 })), 3.2, 7.4, 1.4);
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.3, 1.3), snowM), 3.2, 8.85, 1.4);
+  g.position.set(x, gy - 0.25, z); g.rotation.y = 0; scene.add(g);   // 코스 끝 중앙, 정면이 슬로프(위쪽)를 본다
+  addObst({ x, z, hx: 5.65, hz: 3.95, rot: g.rotation.y, top: gy + 7.2 });   // 통나무 벽 11.3×7.9m, 지붕 꼭대기까지
+  addObst({ x: x - 5.4 * Math.sin(g.rotation.y), z: z - 5.4 * Math.cos(g.rotation.y), hx: 6.5, hz: 1.5, rot: g.rotation.y, top: gy + 0.6 }); // 앞 데크(낮아서 점프로 넘을 수 있음)
+  g.updateMatrixWorld(); chimneyTop.set(3.2, 9.1, 1.4).applyMatrix4(g.matrixWorld);
+}
+
+/* ───────── 스노우 파크 시설 (주황 + 차콜) ───────── */
+const JIB_LINES = [];                                              // 그라인드 판정용 선분(레일·박스 윗면)
+{
+  const OR = C('#ff5a36'), CH = C('#2b2d31'), CH2 = C('#45484e'), WH = C('#e8eaed'), FONT = '"Barlow Condensed", sans-serif';
+  const parts = [], m4 = new THREE.Matrix4(), eu = new THREE.Euler();
+  const pAdd = (geo, col, x, y, z, rx, ry, rz) => { m4.makeRotationFromEuler(eu.set(rx || 0, ry || 0, rz || 0)); m4.setPosition(x, y, z); geo.applyMatrix4(m4); parts.push(solid(geo, col)); };
+  const pBox = (w, h, d, col, x, y, z, rx, ry, rz) => pAdd(new THREE.BoxGeometry(w, h, d), col, x, y, z, rx, ry, rz);
+  const pCyl = (r, h, col, x, y, z, rx, ry, rz) => pAdd(new THREE.CylinderGeometry(r, r, h, 8), col, x, y, z, rx, ry, rz);
+  const Hp = (d, z) => H(PX + d, z);
+  const pitch = (y0, y1, len) => Math.atan2(y0 - y1, len);         // 로컬 +z가 (len, y1 − y0) 방향을 보도록 하는 x축 회전
+  // 글자 판: 위쪽 슬로프(−z)를 보는 캔버스 텍스처 + 차콜 뒤판
+  function sign(w, h, x, y, z, draw) {
+    const cv = document.createElement('canvas'); cv.width = w >= 4 ? 1024 : 256; cv.height = Math.round(cv.width * h / w);
+    const tex = new THREE.CanvasTexture(cv); tex.encoding = THREE.sRGBEncoding; tex.anisotropy = 4;
+    const paint = () => { const g = cv.getContext('2d'); g.textAlign = 'center'; g.textBaseline = 'middle'; draw(g, cv.width, cv.height); tex.needsUpdate = true; };
+    paint(); if (document.fonts && document.fonts.ready) document.fonts.ready.then(paint);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+    m.position.set(x, y, z - 0.09); m.rotation.y = Math.PI; scene.add(m);
+    pBox(w + 0.2, h + 0.2, 0.14, CH, x, y, z);
+  }
+  function flag(x, gy, z) {                                        // 깃발(페더 플래그)
+    pCyl(0.04, 3.4, CH, x, gy + 1.6, z);
+    pBox(0.03, 2.1, 0.62, OR, x, gy + 2.15, z + 0.33); pBox(0.035, 0.26, 0.62, CH, x, gy + 3.05, z + 0.33);
+    addObst({ x, z, r: 0.15 });
+  }
+
+  // 입구 아치 "SNOW PARK"
+  { const z = PZ_START + 14, top = Hp(0, z) + 6.8;
+    [-1, 1].forEach(s => {
+      const d = s * 17.5, gy = Hp(d, z) - 0.3, hh = top - gy;
+      pBox(0.7, hh, 0.7, CH, PX + d, gy + hh / 2, z); pBox(0.74, 0.5, 0.74, OR, PX + d, gy + 1.1, z); pBox(0.74, 0.5, 0.74, OR, PX + d, top - 1.6, z);
+      addObst({ x: PX + d, z, r: 0.6, top: top + 0.5 });
+      flag(PX + s * 19.5, Hp(s * 19.5, z + 2), z + 2);
+    });
+    pBox(35.7, 0.5, 0.6, CH, PX, top - 0.25, z);
+    [-4.5, 4.5].forEach(o => pBox(0.08, 0.5, 0.08, CH, PX + o, top - 0.6, z));
+    sign(12, 1.9, PX, top - 1.6, z, (g, W, Hh) => {
+      g.fillStyle = '#ff5a36'; g.fillRect(0, 0, W, Hh); g.fillStyle = '#2b2d31'; g.fillRect(0, Hh - 14, W, 14);
+      g.font = '700 ' + Math.round(Hh * 0.62) + 'px ' + FONT; g.fillText('SNOW PARK', W / 2, Hh * 0.47);
+    });
+  }
+
+  // 테이블탑: 도약대 끝과 착지 모서리에 주황 줄, 양옆 깃발, 앞에 크기 표지판
+  TABLES.forEach(t => {
+    const zl = t.z + t.ramp, zk = zl + t.top;
+    [[zl - 0.25, zl], [zk, zk + 0.3]].forEach(([za, zb]) => { const ya = Hp(0, za), yb = Hp(0, zb); pBox(t.half * 2, 0.04, zb - za + 0.05, OR, PX, (ya + yb) / 2 + 0.03, (za + zb) / 2, pitch(ya, yb, zb - za)); });
+    [-1, 1].forEach(s => { const d = s * (t.half + t.h + 2.5); flag(PX + d, Hp(d, zl), zl); });
+    const sd = -(t.half + t.h + 3.2), sz = t.z - 3, gy = Hp(sd, sz);
+    [-0.55, 0.55].forEach(o => pBox(0.1, 2.4, 0.1, CH, PX + sd + o, gy + 1.0, sz + 0.1));
+    sign(1.5, 1.5, PX + sd, gy + 2.0, sz, (g, W, Hh) => { g.fillStyle = '#2b2d31'; g.fillRect(0, 0, W, Hh); g.fillStyle = '#ff5a36'; g.font = '700 ' + Math.round(Hh * 0.78) + 'px ' + FONT; g.fillText(t.label, W / 2, Hh * 0.54); });
+    addObst({ x: PX + sd, z: sz, hx: 0.8, hz: 0.15, top: gy + 2.8 });
+  });
+
+  // 레일(주황 파이프 + 차콜 기둥)과 박스(밝은 윗판 + 차콜 몸체 + 주황 띠). 윗면 선분은 그라인드 판정에 쓴다.
+  JIBS.forEach(j => {
+    const x = PX + j.d, za = j.z, zb = j.z + j.len, ya = H(x, za), yb = H(x, zb) + j.hb;   // H(x, za)는 진입 램프 꼭대기 = 바닥 + hb
+    const dir = v3(0, yb - ya, zb - za), len = dir.length(); dir.divideScalar(len);
+    const rail = j.type === 'rail', th = pitch(ya, yb, zb - za), my = (ya + yb) / 2, mz = (za + zb) / 2;
+    JIB_LINES.push({ x, za, zb, ya, yb, len, dir, rail, tol: rail ? 0.9 : j.w / 2 + 0.7 });
+    if (rail) {
+      pCyl(0.05, len, OR, x, my - 0.05, mz, Math.PI / 2 + th);
+      const n = Math.max(2, Math.round(j.len / 3.5));
+      for (let i = 0; i <= n; i++) {
+        const f = 0.04 + 0.92 * i / n, pz = za + (zb - za) * f, ty = lerp(ya, yb, f) - 0.1, gy = H(x, pz) - 0.3;
+        pBox(0.08, ty - gy, 0.08, CH, x, (ty + gy) / 2, pz); pBox(0.5, 0.06, 0.3, CH2, x, gy + 0.3, pz);
+      }
+    } else {
+      const bodyH = j.hb + 0.45;
+      pBox(j.w, 0.06, len, WH, x, my - 0.03, mz, th);
+      pBox(j.w - 0.04, bodyH, len - 0.02, CH, x, my - 0.06 - bodyH / 2, mz, th);
+      pBox(j.w + 0.02, 0.12, len, OR, x, my - 0.17, mz, th);
+    }
+    // 옆에서 들이받으면 막히도록 2m 단위로 나눠 등록. 앞 1m는 비워 진입 램프에서 올라탈 때 앞면에 걸리지 않게 한다.
+    const c0 = za + 1, m = Math.ceil((zb - c0) / 2), sl = (zb - c0) / m;
+    for (let k = 0; k < m; k++) addObst({ x, z: c0 + (k + 0.5) * sl, hx: rail ? 0.08 : j.w / 2, hz: sl / 2, top: lerp(ya, yb, (c0 - za + k * sl) / (zb - za)) + 0.05 });
+  });
+
+  // 하프파이프: 입구 게이트 "HALFPIPE" (벽 꼭대기 주황 코핑 띠는 2026-11-05 사용자 요청으로 뺐다)
+  { const z = PIPE.z0 + 16, top = Hp(0, z) + PIPE.CAP + 6;
+    [-1, 1].forEach(s => {
+      const d = s * 17.5, gy = Hp(d, z) - 0.3, hh = top - gy;
+      pBox(0.6, hh, 0.6, CH, PX + d, gy + hh / 2, z); pBox(0.64, 0.45, 0.64, OR, PX + d, gy + 1.0, z);
+      addObst({ x: PX + d, z, r: 0.5, top: top + 0.5 });
+    });
+    pBox(35.6, 0.45, 0.5, CH, PX, top - 0.22, z);
+    [-4.5, 4.5].forEach(o => pBox(0.08, 0.5, 0.08, CH, PX + o, top - 0.6, z));
+    sign(11, 1.6, PX, top - 1.6, z, (g, W, Hh) => {
+      g.fillStyle = '#2b2d31'; g.fillRect(0, 0, W, Hh); g.fillStyle = '#ff5a36'; g.fillRect(0, 0, 18, Hh); g.fillRect(W - 18, 0, 18, Hh);
+      g.font = '700 ' + Math.round(Hh * 0.6) + 'px ' + FONT; g.fillText('HALFPIPE', W / 2, Hh * 0.52);
+    });
+  }
+
+  // 양옆 펜스(4m 판넬, 40m마다 한 칸 비워 메인 쪽으로 넘어갈 수 있게)
+  { const fp = [];
+    const fb = (w, h, d, col, y) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(0, y, 0); fp.push(solid(g, col)); };
+    [-1.95, 1.95].forEach(z => { const g = new THREE.CylinderGeometry(0.045, 0.05, 1.25, 6); g.translate(0, 0.55, z); fp.push(solid(g, CH)); });
+    fb(0.05, 0.09, 4, OR, 1.12); fb(0.025, 0.5, 3.9, OR, 0.72); fb(0.04, 0.06, 4, CH, 0.32);
+    const list = [];
+    [-1, 1].forEach(s => { let k = 0; for (let z = PZ_START + 24; z < PIPE.z0 - 4; z += 4, k++) if (k % 10 !== 9) list.push([PX + s * 21.5, z]); });
+    const fm = instanced(merge(fp), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.1 }), list.length), o3 = new THREE.Object3D();
+    list.forEach(([x, z], i) => {
+      const y0 = H(x, z), y1 = H(x, z + 4);
+      o3.position.set(x, (y0 + y1) / 2 - 0.05, z + 2); o3.rotation.set(pitch(y0, y1, 4), 0, 0); o3.updateMatrix(); fm.setMatrixAt(i, o3.matrix);
+      addObst({ x, z: z + 2, hx: 0.12, hz: 2, top: Math.max(y0, y1) + 1.15 });
+    });
+  }
+
+  // 상부 정류장 갈림길 표지판(2026-11-05): 하차 출구 오른쪽, 뒤 울타리 끝 바로 뒤.
+  // 화살표 판 끝이 실제 방향을 가리킨다(−x 메인 슬로프, +x 스노우 파크). 앞뒤 양면에 글자.
+  { const x = xc(-378) + LIFT_DX - 9.5, z = -378 - 4, gy = H(x, z) - 0.2;
+    pCyl(0.09, 4.6, CH, x, gy + 2.3, z); pBox(0.26, 0.12, 0.26, OR, x, gy + 4.62, z);
+    addObst({ x, z, r: 0.2 });
+    [[-1, 3.85, '#10263a', '#f4f8fc', '#ffb347', '메인 슬로프', 'MAIN SLOPE'], [1, 2.85, '#ff5a36', '#ffffff', '#2b2d31', '스노우 파크', 'SNOW PARK']].forEach(([d, hy, bg, fg, sub, ko, en]) => {
+      const w = 3.6, h = 0.86, t = 0.45, cx = x + d * (w / 2 - 0.05), y = gy + hy;
+      const sh = new THREE.Shape(); sh.moveTo(-w / 2, -h / 2); sh.lineTo(w / 2 - t, -h / 2); sh.lineTo(w / 2, 0); sh.lineTo(w / 2 - t, h / 2); sh.lineTo(-w / 2, h / 2); sh.closePath();
+      const ge = new THREE.ExtrudeGeometry(sh, { depth: 0.08, bevelEnabled: false }); ge.translate(0, 0, -0.04);
+      pAdd(ge, C(bg), cx, y, z, 0, d > 0 ? 0 : Math.PI, 0);
+      const pw = w - t - 0.2, ph = h - 0.12, cv = document.createElement('canvas'); cv.width = 512; cv.height = Math.round(512 * ph / pw);
+      const tex = new THREE.CanvasTexture(cv); tex.encoding = THREE.sRGBEncoding; tex.anisotropy = 4;
+      const paint = () => {
+        const g = cv.getContext('2d'), W = cv.width, Hh = cv.height;
+        g.fillStyle = bg; g.fillRect(0, 0, W, Hh); g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillStyle = fg; g.font = '700 ' + Math.round(Hh * 0.5) + 'px "Noto Sans KR", sans-serif'; g.fillText(ko, W / 2, Hh * 0.38);
+        g.fillStyle = sub; g.font = '700 ' + Math.round(Hh * 0.27) + 'px ' + FONT; g.fillText(en, W / 2, Hh * 0.8);
+        tex.needsUpdate = true;
+      };
+      paint(); if (document.fonts && document.fonts.ready) document.fonts.ready.then(paint);
+      const mat = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }), tx = cx - d * t / 2;
+      [1, -1].forEach(f => { const m = new THREE.Mesh(new THREE.PlaneGeometry(pw, ph), mat); m.position.set(tx, y, z + f * 0.045); if (f < 0) m.rotation.y = Math.PI; scene.add(m); });
+    });
+  }
+
+  const pm = new THREE.Mesh(merge(parts), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.12 }));
+  pm.castShadow = true; pm.receiveShadow = true; scene.add(pm);
+}
+
+/* ───────── 보더 ───────── */
+const rig = new THREE.Group(); scene.add(rig);
+const lean = new THREE.Group(); rig.add(lean);
+const S = (hex, r, m) => new THREE.MeshStandardMaterial({ color: C(hex), roughness: r == null ? 0.7 : r, metalness: m || 0 });
+const mat = { jacket: S('#ff5a36', 0.62), pants: S('#1d2f4a', 0.82), dark: S('#161d27', 0.55), skin: S('#f0c9a8', 0.75), helmet: S('#eef2f6', 0.32), navy: S('#10263a', 0.5), white: S('#f4f8fc', 0.45), pack: S('#2a4a6b', 0.7),
+  lens: new THREE.MeshStandardMaterial({ color: C('#ffb347'), roughness: 0.12, metalness: 0.7, emissive: C('#6a3000'), emissiveIntensity: 0.6 }) };
+function roundedRect(w, l, r) { const s = new THREE.Shape(), x = -w / 2, y = -l / 2; s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r); s.lineTo(x + w, y + l - r); s.quadraticCurveTo(x + w, y + l, x + w - r, y + l); s.lineTo(x + r, y + l); s.quadraticCurveTo(x, y + l, x, y + l - r); s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y); return s; }
+function boardGeo(w, l, r, t) {
+  const g = new THREE.ExtrudeGeometry(roundedRect(w, l, r), { depth: t, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.006, bevelSegments: 2, curveSegments: 10 });
+  g.rotateX(-Math.PI / 2);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) { const a = Math.abs(p.getZ(i)) - l * 0.38; if (a > 0) p.setY(i, p.getY(i) + Math.pow(a / (l * 0.12), 2) * 0.09); }
+  g.computeVertexNormals(); return g;
+}
+const STANCE = 0.31;   // 앞뒤 발 위치(보드 중심에서 ±)
+function part(geo, m, parent) { const o = new THREE.Mesh(geo, m); o.castShadow = true; (parent || lean).add(o); return o; }
+mat.gray = S('#3b4656', 0.5, 0.4); mat.sole = S('#2a2f36', 0.9);
+mat.hb = S('#161d27', 0.5); mat.hb.side = THREE.DoubleSide;
+const SPH = new THREE.SphereGeometry(1, 16, 12), CYL = new THREE.CylinderGeometry(1, 1, 1, 12), BOX = new THREE.BoxGeometry(1, 1, 1);
+const ARC = new THREE.TorusGeometry(1, 0.08, 6, 24, Math.PI);   // 위쪽 반원 띠(스트랩·멜빵용). 로컬 xy 평면
+function put(m, geo, p, s, r, parent) { const o = part(geo, m, parent); o.position.set(p[0], p[1], p[2]); if (s) o.scale.set(s[0], s[1], s[2]); if (r) o.rotation.set(r[0], r[1], r[2]); return o; }
+{
+  // 보드(1.68m × 0.37m, 2026-11-12 키움): 주황 테두리 판 위에 남색 데크, 흰 옆면, 주황 줄, 노즈/테일 흰 줄
+  const rim = part(boardGeo(0.37, 1.69, 0.17, 0.012), [mat.jacket, mat.white]); rim.position.y = 0.03;
+  const deck = part(boardGeo(0.33, 1.63, 0.15, 0.026), [mat.navy, mat.white]); deck.position.y = 0.037;
+  const stripe = part(boardGeo(0.08, 1.22, 0.04, 0.004), mat.jacket); stripe.position.y = 0.07;
+  [0.6, -0.6].forEach(z => put(mat.white, BOX, [0, 0.072, z], [0.27, 0.004, 0.03]));
+  // 바인딩: 베이스플레이트·디스크·하이백·발목/발가락 스트랩·래칫
+  [STANCE, -STANCE].forEach(z => {
+    put(mat.dark, BOX, [0.01, 0.072, z], [0.3, 0.025, 0.21]);
+    put(mat.gray, CYL, [0, 0.087, z], [0.085, 0.01, 0.085]);
+    put(mat.hb, new THREE.CylinderGeometry(0.105, 0.115, 0.24, 14, 1, true, Math.PI, Math.PI), [0.04, 0.23, z], null, [0, 0, -0.18]);
+    put(mat.jacket, ARC, [0.04, 0.15, z], [0.125, 0.125, 0.35], [0, Math.PI / 2, 0]);
+    put(mat.jacket, ARC, [0.15, 0.135, z], [0.08, 0.078, 0.28], [0, Math.PI / 2, 0]);
+    put(mat.gray, BOX, [0.04, 0.25, z + 0.07], [0.04, 0.02, 0.035], [0.6, 0, 0]);
+  });
+}
+const shin = [part(CYL, mat.pants), part(CYL, mat.pants)], thigh = [part(CYL, mat.pants), part(CYL, mat.pants)], kneeJ = [part(SPH, mat.pants), part(SPH, mat.pants)];
+const boot = [part(SPH, mat.dark), part(SPH, mat.dark)];
+boot.forEach(b => b.scale.set(0.16, 0.1, 0.11));
+[STANCE, -STANCE].forEach(z => put(mat.sole, BOX, [0.02, 0.105, z], [0.34, 0.035, 0.125]));   // 부츠 밑창
+const shaft = [part(CYL, mat.dark), part(CYL, mat.dark)], flare = [part(CYL, mat.pants), part(CYL, mat.pants)];   // 부츠 목, 바지 밑단
+const pocket = [part(BOX, mat.navy), part(BOX, mat.navy)], pelvis = part(SPH, mat.pants);
+// 상체: chest 그룹 로컬 +x가 앞(가슴), +y가 척추 방향
+const chest = new THREE.Group(); lean.add(chest);
+{
+  put(mat.jacket, SPH, [0, 0, 0], [0.19, 0.36, 0.26], null, chest);                        // 몸통
+  put(mat.navy, CYL, [0, -0.24, 0], [0.16, 0.08, 0.215], null, chest);                        // 밑단 밴드
+  put(mat.navy, SPH, [0, 0, 0], [0.196, 0.35, 0.014], null, chest);                        // 지퍼(몸통 곡면을 따라감)
+  put(mat.jacket, CYL, [0, 0.33, 0], [0.12, 0.09, 0.14], null, chest);                      // 깃
+  put(mat.jacket, SPH, [-0.13, 0.3, 0], [0.11, 0.09, 0.15], [0, 0, 0.4], chest);            // 후드
+  put(mat.pack, SPH, [-0.2, 0.02, 0], [0.09, 0.22, 0.17], null, chest);                     // 배낭
+  put(mat.navy, SPH, [-0.28, -0.07, 0], [0.04, 0.09, 0.11], null, chest);                   // 배낭 앞주머니
+  put(mat.dark, BOX, [-0.29, 0.06, 0], [0.012, 0.02, 0.2], null, chest);                    // 배낭 가로 끈
+  [1, -1].forEach(s => put(mat.dark, ARC, [0, -0.02, 0.13 * s], [0.175, 0.33, 0.5], null, chest));   // 어깨끈
+  put(mat.dark, SPH, [0, 0.12, 0], [0.193, 0.022, 0.2], null, chest);                      // 가슴끈
+}
+const uArm = [part(CYL, mat.jacket), part(CYL, mat.jacket)], fArm = [part(CYL, mat.jacket), part(CYL, mat.jacket)];
+const shJ = [part(SPH, mat.jacket), part(SPH, mat.jacket)], elJ = [part(SPH, mat.jacket), part(SPH, mat.jacket)], glove = [part(SPH, mat.dark), part(SPH, mat.dark)];
+const armBand = [part(CYL, mat.white), part(CYL, mat.white)], wrist = [part(CYL, mat.navy), part(CYL, mat.navy)], gaunt = [part(CYL, mat.dark), part(CYL, mat.dark)], thumb = [part(SPH, mat.dark), part(SPH, mat.dark)];
+const head = new THREE.Group(); lean.add(head);
+{
+  // 머리 로컬 +x가 얼굴 앞
+  part(new THREE.SphereGeometry(0.15, 16, 12), mat.skin, head);
+  put(mat.skin, SPH, [0.15, -0.04, 0], [0.025, 0.025, 0.022], null, head);                   // 코
+  const hel = part(new THREE.SphereGeometry(0.185, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.58), mat.helmet, head); hel.position.y = 0.025;
+  put(mat.jacket, new THREE.TorusGeometry(0.188, 0.014, 6, 28, Math.PI * 0.78), [0, 0.025, 0], null, [0, 0, Math.PI * 0.17], head);   // 헬멧 줄무늬
+  [[-0.04, 0.06], [-0.04, -0.06], [0.05, 0.06], [0.05, -0.06]].forEach(([dx, dz]) =>
+    put(mat.dark, BOX, [dx, 0.025 + Math.sqrt(0.185 * 0.185 - dx * dx - dz * dz), dz], [0.045, 0.01, 0.018], [dz * 3, 0, -dx * 5.4], head));   // 통풍구
+  [1, -1].forEach(s => put(mat.dark, CYL, [-0.01, -0.03, 0.178 * s], [0.06, 0.02, 0.06], [Math.PI / 2, 0, 0], head));   // 귀 패드
+  const strap = part(new THREE.TorusGeometry(0.168, 0.02, 6, 28), mat.navy, head); strap.rotation.x = Math.PI / 2; strap.position.y = 0.02;
+  put(mat.dark, SPH, [0.128, 0.02, 0], [0.045, 0.078, 0.15], null, head);                  // 고글 프레임
+  const lensM = part(SPH, mat.lens, head); lensM.scale.set(0.05, 0.065, 0.135); lensM.position.set(0.14, 0.02, 0);
+  const gaiter = part(CYL, mat.navy, head); gaiter.scale.set(0.11, 0.12, 0.11); gaiter.position.y = -0.16;
+  put(mat.navy, SPH, [0.03, -0.12, 0], [0.13, 0.09, 0.14], null, head);                     // 넥워머(턱 덮개)
+  head.rotation.y = -Math.PI / 2;
+}
+const at = (a, b, t) => a.clone().lerp(b, t);
+const qTw = new THREE.Quaternion(), _d = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+function limb(mesh, a, b, r) {
+  mesh.position.copy(a).add(b).multiplyScalar(0.5);
+  _d.copy(b).sub(a); const len = Math.max(0.001, _d.length());
+  mesh.scale.set(r, len, r); mesh.quaternion.setFromUnitVectors(UP, _d.divideScalar(len));
+}
+// sit: 0 = 서서 타기, 1 = 리프트 의자에 앉기(보드는 그대로 발에 붙어 매달림). bar: 안전바 내림 정도(손 위치)
+function pose(c, steer, air, sit, bar) {
+  sit = sit || 0; bar = bar || 0;
+  const hipY = lerp(0.95, 0.72, c), hx = 0.06 * c;
+  [STANCE, -STANCE].forEach((z0, i) => {
+    const foot = v3(0, 0.17, z0), hip = v3(hx, hipY, z0 * 0.4);
+    const knee = foot.clone().add(hip).multiplyScalar(0.5); knee.x += 0.09 + 0.22 * c; knee.z *= 0.88;   // 무릎은 발끝 쪽 + 살짝 안쪽
+    if (sit > 0) { hip.lerp(v3(-0.4, 0.62, z0 * 0.42), sit); knee.lerp(v3(0.02, 0.67, z0 * 0.62), sit); }
+    limb(shin[i], foot, knee, 0.085); limb(thigh[i], knee, hip, 0.105);
+    limb(shaft[i], foot, at(foot, knee, 0.36), 0.093); limb(flare[i], at(foot, knee, 0.26), at(foot, knee, 0.44), 0.1);
+    kneeJ[i].position.copy(knee); kneeJ[i].scale.setScalar(0.093);
+    boot[i].position.set(0.02, 0.15, z0);
+    pocket[i].position.copy(at(knee, hip, 0.5)); pocket[i].position.z += Math.sign(z0) * 0.1;
+    pocket[i].quaternion.copy(thigh[i].quaternion); pocket[i].scale.set(0.08, 0.12, 0.03);
+  });
+  const hc = v3(hx, hipY, 0), sc = hc.clone().add(v3(0.05 + 0.13 * c, 0.58 - 0.1 * c, 0));
+  if (sit > 0) { hc.lerp(v3(-0.4, 0.62, 0), sit); sc.lerp(v3(-0.48, 1.14, 0), sit); }
+  const mid = hc.clone().add(sc).multiplyScalar(0.5), dir = sc.clone().sub(hc), len = dir.length();
+  dir.divideScalar(len);
+  pelvis.position.set(hc.x - 0.01, hc.y + 0.02, 0); pelvis.scale.set(0.15, 0.13, 0.22);
+  // 어깨를 진행 방향(+z) 쪽으로 살짝 열기: 참고 이미지처럼 몸이 비스듬히 아래를 봄
+  const tw = (0.38 + 0.12 * c) * (1 - sit), ct = Math.cos(tw), st = Math.sin(tw);
+  chest.position.copy(mid).add(v3(0, 0.03, 0)); chest.quaternion.setFromUnitVectors(UP, dir); chest.scale.set(1, len * 0.64 / 0.36, 1);
+  chest.quaternion.multiply(qTw.setFromAxisAngle(UP, -tw));
+  pelvis.rotation.y = -tw * 0.45;
+  [1, -1].forEach((sg, i) => {
+    const sh = sc.clone().add(v3(-0.23 * st * sg, -0.05, 0.23 * ct * sg));
+    const lift = (sg > 0 ? steer : -steer) * 0.22 + air * 0.3;
+    // 앞팔: 앞 무릎 쪽으로 내려 노즈를 가리킴 / 뒷팔: 팔꿈치 굽혀 허리 앞. 공중에선 옆으로 벌림
+    const hd = sh.clone().add(sg > 0 ? v3(0.16 + 0.08 * c, -0.5 + lift, 0.16 + air * 0.22) : v3(0.24 + 0.06 * c, -0.42 + lift, -0.06 - air * 0.3));
+    if (sit > 0) hd.lerp(v3(lerp(-0.12, 0.08, bar), lerp(0.77, 0.85, bar), sg * lerp(0.2, 0.3, bar)), sit);   // 앉으면 허벅지 위 → 안전바
+    const el = sh.clone().add(hd).multiplyScalar(0.5).add(sg > 0 ? v3(-0.03, -0.02, 0.08) : v3(-0.1, -0.02, -0.06));
+    limb(uArm[i], sh, el, 0.068); limb(fArm[i], el, hd, 0.06);
+    shJ[i].position.copy(sh); shJ[i].scale.setScalar(0.082);
+    elJ[i].position.copy(el); elJ[i].scale.setScalar(0.064);
+    glove[i].position.copy(hd); glove[i].scale.setScalar(0.078);
+    limb(armBand[i], at(sh, el, 0.35), at(sh, el, 0.5), 0.071);     // 소매 흰 줄
+    limb(wrist[i], at(el, hd, 0.68), at(el, hd, 0.78), 0.066);      // 소맷부리
+    limb(gaunt[i], at(el, hd, 0.78), at(el, hd, 0.96), 0.074);      // 장갑 손목
+    thumb[i].position.copy(hd).add(v3(0.035, 0.045, -0.02 * sg)); thumb[i].scale.setScalar(0.034);
+  });
+  head.position.copy(sc).add(v3(0.04, 0.27, 0));
+}
+
+/* ───────── 상태 / 튜닝 ───────── */
+const TUNE_DEF = { g: 20, turn: 1, grip: 5.5, drag: 0.008, jump: 8, push: 6 };
+const TUNE_UI = [
+  { k: 'g', label: '중력(내리막 가속)', min: 8, max: 40, step: 0.5, hint: '높이면 더 빨리 내려가고 점프 후 빨리 떨어집니다' },
+  { k: 'turn', label: '회전 속도', min: 0.5, max: 2, step: 0.05, hint: '배율. 1.0이 기본' },
+  { k: 'grip', label: '엣지 그립', min: 1, max: 14, step: 0.5, hint: '낮으면 미끄러지고, 높으면 레일처럼 붙습니다' },
+  { k: 'drag', label: '공기저항', min: 0.002, max: 0.02, step: 0.001, hint: '낮으면 최고 속도가 올라갑니다' },
+  { k: 'jump', label: '점프 힘', min: 4, max: 14, step: 0.5, hint: '' },
+  { k: 'push', label: '밀기 가속', min: 2, max: 14, step: 0.5, hint: 'W로 출발할 때의 가속' }
+];
+const tune = Object.assign({}, TUNE_DEF);
+try { const s = JSON.parse(localStorage.getItem('snowfolio-tune') || 'null'); if (s) TUNE_UI.forEach(u => { if (typeof s[u.k] === 'number') tune[u.k] = clamp(s[u.k], u.min, u.max); }); } catch (e) {}
+const MU = 0.055, PUSH_MAX = 11, BOOST = 6, BRAKE = 12, SCRUB = 0.15;
+
+const P = { pos: new THREE.Vector3(), vel: new THREE.Vector3(), heading: 0, steer: 0, grounded: true, coyote: 0, jumpQ: 0, jumpLock: 0, airTime: 0, airSpin: 0, speed: 0, lat: 0, shake: 0, stun: 0, crouch: 0.3,
+  grind: null, gs: 0, gv: 0, grindT: 0, grindLock: 0 };          // grind: 타고 있는 레일·박스(JIB_LINES 항목), gs: 선분 위 거리, gv: 선분 방향 속도
+const keys = {};
+let running = false, started = false, arrived = false, time = 0, snapCam = true, course = 'main', startY = 0;
+const cam = { yaw: 0, userYaw: 0, userPitch: 0, pos: new THREE.Vector3(), want: new THREE.Vector3(), look: new THREE.Vector3() };
+const COURSE_NAME = { main: '메인 슬로프', park: '스노우 파크' };
+
+function respawn(c) {
+  if (c) course = c;
+  const z = course === 'park' ? PZ_START : Z_START, x = course === 'park' ? PX : xc(z);
+  P.pos.set(x, H(x, z), z); P.vel.set(0, 0, 0); P.heading = 0; P.steer = 0; startY = P.pos.y;
+  P.grounded = true; P.airTime = 0; P.stun = 0; P.shake = 0; P.grind = null; P.grindLock = 0; arrived = false; snapCam = true;
+  cam.yaw = 0; cam.userYaw = 0; cam.userPitch = 0;
+  clearTrack();
+  endRide();
+}
+
+/* ───────── 물리 (v0.1과 동일) ───────── */
+const nrm = new THREE.Vector3(0, 1, 0), nrm2 = new THREE.Vector3(), fwd = new THREE.Vector3(), acc = new THREE.Vector3(), tA = new THREE.Vector3(), tB = new THREE.Vector3();
+const STEP = 1 / 90;
+function readInput() {
+  const l = keys.KeyA || keys.ArrowLeft, r = keys.KeyD || keys.ArrowRight;
+  return { steer: (r ? 1 : 0) - (l ? 1 : 0), push: keys.KeyW || keys.ArrowUp, brake: keys.KeyS || keys.ArrowDown, boost: keys.ShiftLeft || keys.ShiftRight };
+}
+function physics(dt) {
+  const inp = readInput();
+  P.steer += (inp.steer - P.steer) * Math.min(1, dt * 9);
+  if (P.stun > 0) P.stun -= dt;
+  const ctl = P.stun > 0 ? 0.55 : 1;
+  if (P.jumpQ > 0) P.jumpQ -= dt;
+  if (P.coyote > 0) P.coyote -= dt;
+  if (P.grindLock > 0) P.grindLock -= dt;
+
+  if (P.grind) grindStep(dt, ctl);
+  else if (P.grounded) {
+    N(P.pos.x, P.pos.z, nrm);
+    const sp = Math.hypot(P.vel.x, P.vel.z);
+    P.heading -= P.steer * lerp(2.5, 1.15, clamp(sp / 24, 0, 1)) * tune.turn * ctl * dt;
+    fwd.set(Math.sin(P.heading), 0, Math.cos(P.heading)); fwd.addScaledVector(nrm, -fwd.dot(nrm)).normalize();
+    acc.set(0, -1, 0).addScaledVector(nrm, nrm.y).multiplyScalar(tune.g);
+    P.vel.addScaledVector(acc, dt);
+    if (inp.push && P.vel.dot(fwd) < PUSH_MAX) P.vel.addScaledVector(fwd, tune.push * dt * ctl);
+    if (inp.boost) P.vel.addScaledVector(fwd, BOOST * dt * ctl);
+    let s = P.vel.length();
+    const pipeK = pipeW(P.pos.z) > 0.6 && Math.abs(P.pos.x - PX) < PIPE.lip + 0.5 ? 0.3 : 1;   // 하프파이프 안은 마찰·스크럽을 줄여 벽을 여러 번 탈 수 있게
+    if (s > 1e-4) { let dec = MU * tune.g * nrm.y * pipeK + tune.drag * s * s; if (inp.brake) dec += BRAKE; s = Math.max(0, s - dec * dt); P.vel.setLength(s); }
+    P.vel.addScaledVector(nrm, -P.vel.dot(nrm));
+    s = P.vel.length();
+    if (s > 0.05) {
+      tA.copy(P.vel).divideScalar(s);
+      const d = tA.dot(fwd), sg = d >= 0 ? 1 : -1, t = 1 - Math.exp(-tune.grip * (inp.brake ? 0.5 : 1) * dt);
+      tB.copy(fwd).multiplyScalar(sg); tA.lerp(tB, t).normalize();
+      const sinA = Math.sqrt(Math.max(0, 1 - d * d));
+      P.lat = sinA * s; s *= 1 - SCRUB * pipeK * sinA * t;
+      P.vel.copy(tA).multiplyScalar(s);
+    } else P.lat = 0;
+    if (P.jumpQ > 0) {
+      const pw = tune.jump * (inp.brake ? 0.8 : 1) * ctl;
+      P.vel.addScaledVector(nrm, pw); P.grounded = false; P.jumpQ = 0; P.jumpLock = 0.12; P.airTime = 0; P.airSpin = 0;
+      P.pos.addScaledVector(P.vel, dt); spawnSpray(14, 2.5);
+    } else {
+      P.pos.addScaledVector(P.vel, dt);
+      const h = H(P.pos.x, P.pos.z); N(P.pos.x, P.pos.z, nrm2);
+      const vn = P.vel.dot(nrm2);
+      if (tryGrind()) { /* 램프 끝에서 레일·박스에 올라탐 */ }
+      else if (vn > tune.g * nrm2.y * dt * 0.6 + 0.1) {
+        P.grounded = false; P.coyote = 0.12; P.jumpLock = 0.05; P.airTime = 0; P.airSpin = 0; if (P.pos.y < h) P.pos.y = h;
+        pipeAir();
+      } else {
+        const s1 = P.vel.length(); P.pos.y = h; P.vel.addScaledVector(nrm2, -vn);
+        if (P.vel.lengthSq() > 1e-8) P.vel.setLength(s1);
+        pipeGround();
+      }
+    }
+  } else {
+    if (P.jumpQ > 0 && P.coyote > 0) { N(P.pos.x, P.pos.z, nrm); P.vel.addScaledVector(nrm, tune.jump * ctl); P.jumpQ = 0; P.coyote = 0; P.jumpLock = 0.12; P.airTime = 0; P.airSpin = 0; }
+    P.vel.y -= tune.g * dt;
+    const s = P.vel.length(); P.vel.multiplyScalar(Math.max(0, 1 - tune.drag * 0.4 * s * dt));
+    const sp = -P.steer * 3.4 * tune.turn * ctl * dt; P.heading += sp; P.airSpin += sp; P.lat = 0;
+    P.pos.addScaledVector(P.vel, dt); P.airTime += dt;
+    if (P.jumpLock > 0) P.jumpLock -= dt;
+    if (!tryGrind()) {
+      const h = H(P.pos.x, P.pos.z);
+      if (P.pos.y <= h && (P.jumpLock <= 0 || P.pos.y < h - 0.6)) land(h);
+    }
+  }
+  if (!P.grind) collide();
+  const dxc = P.pos.x - xc(P.pos.z);
+  if (dxc < -118) { P.pos.x = xc(P.pos.z) - 118; P.vel.x *= -0.2; }                   // 메인 왼쪽 숲 끝
+  if (P.pos.x > PX + PARK_EDGE) { P.pos.x = PX + PARK_EDGE; P.vel.x *= -0.2; }      // 파크 오른쪽 숲 끝
+  if (P.pos.z > 395) { P.pos.z = 395; P.vel.z = Math.min(0, P.vel.z) * 0.2; }
+  if (P.pos.z < -395) { P.pos.z = -395; P.vel.z = Math.max(0, P.vel.z) * 0.2; }
+  P.speed = P.vel.length();
+}
+function land(h) {
+  N(P.pos.x, P.pos.z, nrm); P.pos.y = h;
+  const impact = -P.vel.dot(nrm); P.vel.addScaledVector(nrm, -P.vel.dot(nrm));
+  P.grounded = true;
+  if (P.airTime > 0.5) { const deg = Math.round(Math.abs(P.airSpin) * 180 / Math.PI / 45) * 45; toast((deg >= 90 ? deg + '° 스핀 · ' : '') + '체공 ' + P.airTime.toFixed(1) + '초'); }
+  if (impact > 2.5) { if (!RM) P.shake = Math.min(0.5, impact * 0.03); spawnSpray(Math.min(40, 10 + impact * 3), 3.2); }
+}
+/* 그라인드: 레일·박스 윗면 선분에 붙어 미끄러진다. 진입 램프 끝에서 그대로 올라타거나, 점프해서 위로 떨어지면 붙는다. */
+function tryGrind() {
+  if (P.grindLock > 0) return false;
+  for (const j of JIB_LINES) {
+    let t = (P.pos.z - j.za) / (j.zb - j.za); if (P.pos.z < j.za - 0.9 || t > 0.97) continue;   // 시작점 0.9m 앞부터 붙는다(충돌 판정보다 먼저)
+    t = Math.max(0, t);
+    if (Math.abs(P.pos.x - j.x) > j.tol) continue;
+    const top = lerp(j.ya, j.yb, t), dy = P.pos.y - top;
+    if (dy < -0.45 || dy > 0.65 || P.vel.y > 2.5) continue;
+    const v = P.vel.dot(j.dir); if (Math.abs(v) < 1.5) continue;
+    P.grind = j; P.gs = t * j.len; P.gv = v; P.grindT = 0;
+    P.grounded = false; P.airTime = 0; P.airSpin = 0; P.coyote = 0;
+    P.pos.set(j.x, top, P.pos.z); P.vel.copy(j.dir).multiplyScalar(v);
+    return true;
+  }
+  return false;
+}
+function grindStep(dt, ctl) {
+  const j = P.grind;
+  P.grindT += dt;
+  P.gv -= j.dir.y * tune.g * dt;                                    // 내리막이면 dir.y < 0 → 가속
+  const fr = (j.rail ? 0.035 : 0.06) * tune.g * dt + tune.drag * P.gv * P.gv * dt;
+  P.gv = Math.abs(P.gv) <= fr ? 0 : P.gv - Math.sign(P.gv) * fr;
+  P.heading -= P.steer * 2.2 * tune.turn * ctl * dt;               // A/D: 레일 위에서 보드 돌리기(50-50 ↔ 보드슬라이드)
+  P.gs += P.gv * dt;
+  const jump = P.jumpQ > 0, off = P.gs >= j.len || P.gs <= 0 || Math.abs(P.gv) < 0.3;
+  P.gs = clamp(P.gs, 0, j.len);
+  P.pos.set(j.x, j.ya, j.za).addScaledVector(j.dir, P.gs);
+  P.vel.copy(j.dir).multiplyScalar(P.gv);
+  if (!jump && !off) return;
+  if (jump) { P.vel.y += tune.jump * 0.85 * ctl; P.jumpQ = 0; spawnSpray(10, 2); }
+  const dev = Math.min(Math.abs(angDiff(P.heading, 0)), Math.abs(angDiff(P.heading, Math.PI)));
+  toast((j.rail ? '레일 ' : '박스 ') + (dev < 0.7 ? '50-50' : '보드슬라이드') + ' · ' + P.grindT.toFixed(1) + '초');
+  P.grind = null; P.grindLock = 0.35; P.grounded = false; P.jumpLock = 0.1; P.airTime = 0; P.airSpin = 0;
+}
+/* 하프파이프 보조: 벽 꼭대기에서 뜨면 바깥으로 나가는 속도를 없애 같은 벽으로 돌아오게 한다.
+   보드 방향은 건드리지 않는다(2026-11-05 사용자 요청: 자동 좌우 반전 제거, 방향은 A/D로 직접). */
+function pipeAir() {
+  const d = P.pos.x - PX, ad = Math.abs(d), s = Math.sign(d);
+  if (pipeW(P.pos.z) < 0.6 || ad < PIPE.F + 1.5 || ad > PIPE.lip + 1.2) return;
+  if (P.vel.x * s > 0) P.vel.x = 0;
+  if (ad > PIPE.lip - 0.15) P.pos.x = PX + s * (PIPE.lip - 0.15);
+}
+// 벽을 타는 중: 느리게 올라와도 데크로 넘어가지 않게 막는다.
+function pipeGround() {
+  const d = P.pos.x - PX, ad = Math.abs(d), s = Math.sign(d);
+  // 파이프 벽 위(바닥 끝 ~ 코핑 바로 바깥)에서만 작동. 예전엔 바깥쪽 범위 검사가 없어 같은 z(약 215~299)의 메인 슬로프 전체에서
+  // 보드 방향이 매 스텝 좌우로 뒤집혀 '보이지 않는 벽'처럼 덜덜 떨며 막혔다.
+  if (pipeW(P.pos.z) < 0.6 || ad < PIPE.F + 1.2 || ad > PIPE.lip + 0.8) return;
+  if (ad > PIPE.lip + 0.01 && ad < PIPE.lip + 0.8 && P.vel.x * s > 0) { P.pos.x = PX + s * (PIPE.lip - 0.02); P.pos.y = H(P.pos.x, P.pos.z); P.vel.x = 0; }
+}
+function collide() {
+  const lowTop = H(P.pos.x, P.pos.z) + 2.2, PR = 0.45;
+  const cx = Math.floor(P.pos.x / 12), cz = Math.floor(P.pos.z / 12);
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+    const list = grid.get((cx + i) + ',' + (cz + j)); if (!list) continue;
+    for (const idx of list) {
+      const t = obst[idx];
+      if (P.pos.y > (t.top !== undefined ? t.top : lowTop)) continue;
+      const dx = P.pos.x - t.x, dz = P.pos.z - t.z;
+      let nx, nz;
+      if (t.hx === undefined) {                                     // 원
+        const R = t.r + PR, d2 = dx * dx + dz * dz;
+        if (d2 >= R * R) continue;
+        const d = Math.sqrt(d2) || 0.001; nx = dx / d; nz = dz / d;
+        P.pos.x = t.x + nx * R; P.pos.z = t.z + nz * R;
+      } else {                                                      // 상자(rot: y축 회전, three.js와 같은 방향): 가장 가까운 면 밖으로 밀어낸다
+        const c = t.rot ? Math.cos(t.rot) : 1, s = t.rot ? Math.sin(t.rot) : 0;
+        const lx = dx * c - dz * s, lz = dx * s + dz * c;           // 상자 기준 좌표
+        const qx = clamp(lx, -t.hx, t.hx), qz = clamp(lz, -t.hz, t.hz), ex = lx - qx, ez = lz - qz, d2 = ex * ex + ez * ez;
+        if (d2 >= PR * PR) continue;
+        let ox, oz, mx, mz;                                         // 상자 기준 밀어낼 위치와 방향
+        if (d2 > 1e-8) { const d = Math.sqrt(d2); mx = ex / d; mz = ez / d; ox = qx + mx * PR; oz = qz + mz * PR; }
+        else if (t.hx - Math.abs(lx) < t.hz - Math.abs(lz)) { mx = Math.sign(lx) || 1; mz = 0; ox = mx * (t.hx + PR); oz = lz; }
+        else { mx = 0; mz = Math.sign(lz) || 1; ox = lx; oz = mz * (t.hz + PR); }
+        nx = mx * c + mz * s; nz = -mx * s + mz * c;                // 월드 좌표로 되돌린다
+        P.pos.x = t.x + ox * c + oz * s; P.pos.z = t.z - ox * s + oz * c;
+      }
+      const vn = P.vel.x * nx + P.vel.z * nz;
+      if (vn < 0) {
+        // 정면으로 부딪히면 크게 느려지고(예전과 같이 0.55배), 비스듬히 스치면 속도를 거의 잃지 않고 옆으로 미끄러진다
+        const hs = Math.hypot(P.vel.x, P.vel.z), head = hs > 1e-4 ? clamp(-vn / hs, 0, 1) : 1;
+        P.vel.x -= (1 + 0.25 * head) * vn * nx; P.vel.z -= (1 + 0.25 * head) * vn * nz; P.vel.multiplyScalar(1 - 0.45 * head);
+        if (-vn > 3) { P.stun = 0.5; if (!RM) P.shake = Math.min(0.7, -vn * 0.04); spawnSpray(24, 4); toast('부딪혔어요'); }
+      }
+    }
+  }
+}
+
+/* ───────── 입자 (부드러운 원형 스프라이트) ───────── */
+const softTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.45, 'rgba(255,255,255,.75)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c);
+})();
+function particles(n, color) {
+  const geo = new THREE.BufferGeometry(), pos = new Float32Array(n * 3), size = new Float32Array(n), alpha = new Float32Array(n);
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1).setUsage(THREE.DynamicDrawUsage));
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, fog: false, toneMapped: false,
+    uniforms: { map: { value: softTex }, uScale: { value: 400 }, uColor: { value: new THREE.Color(color) } },
+    vertexShader: 'attribute float aSize; attribute float aAlpha; uniform float uScale; varying float vA; void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = aSize * uScale / max(0.1, -mv.z); gl_Position = projectionMatrix * mv; vA = aAlpha; }',
+    fragmentShader: 'uniform sampler2D map; uniform vec3 uColor; varying float vA; void main(){ float a = texture2D(map, gl_PointCoord).a * vA; if (a < 0.01) discard; gl_FragColor = vec4(uColor, a); }'
+  });
+  const pts = new THREE.Points(geo, mat); pts.frustumCulled = false; scene.add(pts);
+  const S = { n, pts, mat, pos, size, alpha, vel: new Float32Array(n * 3), life: new Float32Array(n), max: new Float32Array(n), s0: new Float32Array(n), grow: new Float32Array(n), head: 0 };
+  S.emit = (x, y, z, vx, vy, vz, life, s0, grow) => { const i = S.head; S.head = (S.head + 1) % n; pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z; S.vel[i * 3] = vx; S.vel[i * 3 + 1] = vy; S.vel[i * 3 + 2] = vz; S.life[i] = S.max[i] = life; S.s0[i] = s0; S.grow[i] = grow; };
+  S.update = (dt, gy, drag, peak) => {
+    const k = Math.max(0, 1 - drag * dt);
+    for (let i = 0; i < n; i++) {
+      if (S.life[i] <= 0) { alpha[i] = 0; continue; }
+      S.life[i] -= dt; S.vel[i * 3 + 1] += gy * dt; S.vel[i * 3] *= k; S.vel[i * 3 + 1] *= k; S.vel[i * 3 + 2] *= k;
+      pos[i * 3] += S.vel[i * 3] * dt; pos[i * 3 + 1] += S.vel[i * 3 + 1] * dt; pos[i * 3 + 2] += S.vel[i * 3 + 2] * dt;
+      const f = clamp(S.life[i] / S.max[i], 0, 1), age = S.max[i] - S.life[i];
+      size[i] = S.s0[i] + S.grow[i] * age; alpha[i] = peak * Math.min(1, age * 8) * f;
+    }
+    geo.attributes.position.needsUpdate = true; geo.attributes.aSize.needsUpdate = true; geo.attributes.aAlpha.needsUpdate = true;
+  };
+  return S;
+}
+const spray = particles(420, 0xf7faff), smoke = particles(60, 0xd9dee5);
+function spawnSpray(n, power) {
+  for (let i = 0; i < n; i++) spray.emit(P.pos.x + (Math.random() - 0.5) * 0.8, P.pos.y + 0.2, P.pos.z + (Math.random() - 0.5) * 0.8,
+    P.vel.x * 0.25 + (Math.random() - 0.5) * power * 1.6, 1.2 + Math.random() * power, P.vel.z * 0.25 + (Math.random() - 0.5) * power * 1.6, 0.6 + Math.random() * 0.6, 0.25 + Math.random() * 0.25, 0.9);
+}
+let emitAcc = 0, smokeAcc = 0;
+function updateParticles(dt, fwdv, rightv) {
+  if (running && P.grounded && P.speed > 2) {
+    const brake = keys.KeyS || keys.ArrowDown;
+    emitAcc += (P.lat * 7 + (brake ? P.speed * 4 : 0) + P.speed * 0.8) * dt;
+    while (emitAcc >= 1) {
+      emitAcc -= 1;
+      const side = (Math.random() < 0.5 ? -1 : 1) * Math.random() * 0.45;
+      spray.emit(P.pos.x - fwdv.x * 0.7 + rightv.x * side, P.pos.y + 0.1, P.pos.z - fwdv.z * 0.7 + rightv.z * side,
+        -P.vel.x * 0.12 + rightv.x * side * 3 + (Math.random() - 0.5), 0.8 + Math.random() * 1.8, -P.vel.z * 0.12 + rightv.z * side * 3 + (Math.random() - 0.5), 0.45 + Math.random() * 0.5, 0.18 + Math.random() * 0.2, 0.7);
+    }
+  }
+  if (!RM) { smokeAcc += dt * 3; while (smokeAcc >= 1) { smokeAcc -= 1; smoke.emit(chimneyTop.x + (Math.random() - 0.5) * 0.4, chimneyTop.y, chimneyTop.z + (Math.random() - 0.5) * 0.4, 0.35 + Math.random() * 0.2, 0.9 + Math.random() * 0.3, 0.1, 5 + Math.random() * 2, 0.9, 0.9); } }
+  const sc = renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+  spray.mat.uniforms.uScale.value = sc; smoke.mat.uniforms.uScale.value = sc;
+  spray.update(dt, -6, 1.2, 0.95); smoke.update(dt, 0.15, 0.3, 0.45);
+}
+
+const NF = 2200, FL = { x: 90, y: 50, z: 90 }, flakes = new Float32Array(NF * 3), fg = new THREE.BufferGeometry();
+for (let i = 0; i < NF; i++) { flakes[i * 3] = (Math.random() - 0.5) * FL.x; flakes[i * 3 + 1] = Math.random() * FL.y; flakes[i * 3 + 2] = (Math.random() - 0.5) * FL.z; }
+fg.setAttribute('position', new THREE.BufferAttribute(flakes, 3));
+const flakePts = new THREE.Points(fg, new THREE.PointsMaterial({ color: 0xffffff, map: softTex, size: 0.32, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false }));
+flakePts.frustumCulled = false; scene.add(flakePts);
+function updateFlakes(dt) {
+  if (RM) return;
+  const c = camera.position, cy = c.y - 18;
+  for (let i = 0; i < NF; i++) {
+    let x = flakes[i * 3], y = flakes[i * 3 + 1], z = flakes[i * 3 + 2];
+    y -= (1.5 + (i % 7) * 0.12) * dt; x += Math.sin(time * 0.6 + i) * 0.3 * dt;
+    if (y < cy) y += FL.y; if (y > cy + FL.y) y -= FL.y;
+    if (x < c.x - FL.x / 2) x += FL.x; if (x > c.x + FL.x / 2) x -= FL.x;
+    if (z < c.z - FL.z / 2) z += FL.z; if (z > c.z + FL.z / 2) z -= FL.z;
+    flakes[i * 3] = x; flakes[i * 3 + 1] = y; flakes[i * 3 + 2] = z;
+  }
+  fg.attributes.position.needsUpdate = true;
+}
+
+/* 보드 자국 */
+const MAXP = 520, tPts = [], tGeo = new THREE.BufferGeometry(), tPos = new Float32Array(MAXP * 2 * 3), tIdx = new Uint16Array((MAXP - 1) * 6);
+tGeo.setAttribute('position', new THREE.BufferAttribute(tPos, 3).setUsage(THREE.DynamicDrawUsage)); tGeo.setIndex(new THREE.BufferAttribute(tIdx, 1).setUsage(THREE.DynamicDrawUsage));
+const track = new THREE.Mesh(tGeo, new THREE.MeshBasicMaterial({ color: C('#a9bdd4'), transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+track.frustumCulled = false; scene.add(track);
+let trackBreak = true;
+function clearTrack() { tPts.length = 0; trackBreak = true; tGeo.setDrawRange(0, 0); }
+function addTrack(rx, rz) {
+  const l = tPts[tPts.length - 1];
+  if (l && Math.hypot(l.x - P.pos.x, l.z - P.pos.z) < 0.8 && !trackBreak) return;
+  tPts.push({ x: P.pos.x, z: P.pos.z, rx, rz, brk: trackBreak }); trackBreak = false;
+  if (tPts.length > MAXP) tPts.shift();
+  let n = 0;
+  for (let i = 0; i < tPts.length; i++) {
+    const p = tPts[i], lx = p.x + p.rx * 0.16, lz = p.z + p.rz * 0.16, rx2 = p.x - p.rx * 0.16, rz2 = p.z - p.rz * 0.16;
+    tPos.set([lx, H(lx, lz) + 0.05, lz, rx2, H(rx2, rz2) + 0.05, rz2], i * 6);
+    if (i > 0 && !p.brk) { const a = (i - 1) * 2; tIdx.set([a, a + 1, a + 2, a + 1, a + 3, a + 2], n * 6); n++; }
+  }
+  tGeo.attributes.position.needsUpdate = true; tGeo.index.needsUpdate = true; tGeo.setDrawRange(0, n * 6);
+}
+
+/* ───────── 카메라 ───────── */
+let dragging = false, lastX = 0, lastY = 0, leanRoll = 0;
+canvas.addEventListener('pointerdown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.classList.add('drag'); try { canvas.setPointerCapture(e.pointerId); } catch (_) {} });
+canvas.addEventListener('pointermove', e => { if (!dragging) return; cam.userYaw -= (e.clientX - lastX) * 0.006; cam.userPitch = clamp(cam.userPitch + (e.clientY - lastY) * 0.003, -0.2, 0.7); lastX = e.clientX; lastY = e.clientY; });
+const endDrag = () => { dragging = false; canvas.classList.remove('drag'); };
+canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
+
+function updateCamera(dt) {
+  const spd = P.speed;
+  if (!running) { cam.userYaw = 0.75 + (RM ? 0 : Math.sin(time * 0.35) * 0.55); cam.userPitch = 0.05; cam.yaw = P.heading; }
+  else {
+    const velYaw = Math.atan2(P.vel.x, P.vel.z), tgt = P.heading + angDiff(P.heading, velYaw) * ss(2, 7, spd);
+    cam.yaw += angDiff(cam.yaw, tgt) * (1 - Math.exp(-dt * (2.4 + spd * 0.05)));
+    if (!dragging) { const k = Math.exp(-dt * 1.6); cam.userYaw *= k; cam.userPitch *= k; }
+  }
+  const yaw = cam.yaw + cam.userYaw, dist = 9.2 + spd * 0.07, hgt = 3.3 + spd * 0.03 + cam.userPitch * 9;
+  cam.want.set(P.pos.x - Math.sin(yaw) * dist, P.pos.y + hgt, P.pos.z - Math.cos(yaw) * dist);
+  if (snapCam) { cam.pos.copy(cam.want); snapCam = false; } else cam.pos.lerp(cam.want, 1 - Math.exp(-dt * 9));
+  const gh = H(cam.pos.x, cam.pos.z) + 1.5; if (cam.pos.y < gh) cam.pos.y = gh;
+  camera.position.copy(cam.pos);
+  if (P.shake > 0) { camera.position.x += (Math.random() - 0.5) * P.shake; camera.position.y += (Math.random() - 0.5) * P.shake; P.shake = Math.max(0, P.shake - dt * 1.6); }
+  cam.look.set(P.pos.x + Math.sin(yaw) * 5, P.pos.y + 1.2, P.pos.z + Math.cos(yaw) * 5);
+  camera.lookAt(cam.look);
+  if (!RM && running) camera.rotateZ(-leanRoll * 0.07);
+  const fov = 58 + Math.min(spd, 36) * 0.55;
+  if (Math.abs(camera.fov - fov) > 0.01) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix(); }
+}
+
+/* ───────── 보더 모델 갱신 ───────── */
+const snrm = new THREE.Vector3(0, 1, 0), qT = new THREE.Quaternion(), bm = new THREE.Matrix4(), vX = new THREE.Vector3(), vY = new THREE.Vector3(), vZ = new THREE.Vector3();
+const fwdV = new THREE.Vector3(0, 0, 1), rightV = new THREE.Vector3(1, 0, 0);
+function updateRider(dt) {
+  const onRail = !!P.grind;
+  if (P.grounded) { N(P.pos.x, P.pos.z, nrm); snrm.lerp(nrm, 1 - Math.exp(-dt * 14)).normalize(); }
+  else snrm.lerp(UP, 1 - Math.exp(-dt * (onRail ? 14 : 3))).normalize();
+  if (P.grounded || onRail) { vZ.set(Math.sin(P.heading), 0, Math.cos(P.heading)); vZ.addScaledVector(snrm, -vZ.dot(snrm)).normalize(); }
+  else { const hs = Math.hypot(P.vel.x, P.vel.z), pitch = Math.atan2(P.vel.y, Math.max(hs, 0.1)) * 0.6; vZ.set(Math.sin(P.heading) * Math.cos(pitch), Math.sin(pitch), Math.cos(P.heading) * Math.cos(pitch)); }
+  vY.copy(snrm).addScaledVector(vZ, -snrm.dot(vZ)).normalize(); vX.crossVectors(vY, vZ);
+  bm.makeBasis(vX, vY, vZ); qT.setFromRotationMatrix(bm);
+  rig.quaternion.slerp(qT, 1 - Math.exp(-dt * 16)); rig.position.copy(P.pos);
+  fwdV.copy(vZ); rightV.copy(vX);
+  const rollT = P.steer * 0.5 * ss(0.5, 9, P.speed) + (P.grounded ? 0 : P.steer * 0.25);
+  leanRoll += (rollT - leanRoll) * (1 - Math.exp(-dt * 10)); lean.rotation.z = leanRoll;
+  const tuck = (keys.ShiftLeft || keys.ShiftRight) ? 0.25 : 0, braking = (keys.KeyS || keys.ArrowDown) ? 0.15 : 0;
+  const cT = onRail ? 0.45 : P.grounded ? clamp(0.25 + P.speed / 45 * 0.4 + tuck + braking, 0, 1) : 0.75;
+  P.crouch += (cT - P.crouch) * (1 - Math.exp(-dt * 10));
+  pose(P.crouch, P.steer, P.grounded ? 0 : onRail ? 0.5 : 1);
+}
+
+/* ───────── HUD / 토스트 ───────── */
+const $ = id => document.getElementById(id);
+const elSpd = $('spd'), elDrop = $('drop'), elDist = $('dist'), elMark = $('mark'), elToast = $('toast');
+let toastT = 0, hudT = 0, lastSpd = -1;
+function toast(msg, ms) { elToast.textContent = msg; elToast.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => elToast.classList.remove('on'), ms || 1900); }
+let seenPark = false, seenPipe = false;
+function updateHud(dt) {
+  hudT += dt; if (hudT < 0.05) return; hudT = 0;
+  const s = Math.round(P.speed * 3.6); if (s !== lastSpd) { elSpd.textContent = s; lastSpd = s; }
+  const z0 = course === 'park' ? PZ_START : Z_START;
+  elDrop.textContent = '낙차 ' + Math.max(0, Math.round(startY - P.pos.y)) + ' m';
+  elDist.textContent = '이동 ' + Math.max(0, Math.round(P.pos.z - z0)) + ' m';
+  elMark.style.left = (clamp((P.pos.z - z0) / (Z_END - z0), 0, 1) * 100) + '%';
+  // 지금 어느 코스에 있는지(R 키로 돌아갈 출발점) + 처음 들어갈 때 안내
+  const inPark = Math.abs(P.pos.x - PX) < 26 && P.pos.z < 300;
+  if (inPark) course = 'park'; else if (Math.abs(P.pos.x - xc(P.pos.z)) < 40) course = 'main';
+  if (running && inPark && !seenPark) { seenPark = true; toast('스노우 파크 · 낮은 램프로 레일·박스에 올라타 보세요', 3600); }
+  if (running && inPark && !seenPipe && P.pos.z > PIPE.z0 - 10) { seenPipe = true; toast('하프파이프 · 벽 쪽으로 비스듬히 올라가면 떠올라요', 3600); }
+  if (running && !arrived && P.pos.z > 318 && P.speed < 2) { arrived = true; toast('베이스캠프 도착. R 키로 다시 출발할 수 있어요', 4000); }
+}
+
+/* ───────── 입력 / 시작 / 일시정지 ───────── */
+const startEl = $('start'), goBtn = $('go');
+const HANDLED = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'ShiftLeft', 'ShiftRight']);
+function setRunning(v) {
+  running = v; startEl.hidden = v;
+  if (v && !started) { started = true; toast('W로 먼저 밀어서 출발하세요', 3200); }
+  if (!v) { goBtn.textContent = '계속하기'; Object.keys(keys).forEach(k => keys[k] = false); }
+}
+goBtn.addEventListener('click', () => { setRunning(true); canvas.focus && canvas.focus(); });
+[['goMain', 'main'], ['goPark', 'park']].forEach(([id, c]) => $(id).addEventListener('click', () => { respawn(c); setRunning(true); toast(COURSE_NAME[c] + '에서 출발해요. W로 밀어 주세요', 3000); }));
+window.addEventListener('keydown', e => {
+  if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+  if (e.code === 'Escape') { if (running) setRunning(false); return; }
+  if (!running) { if ((e.code === 'Enter' || e.code === 'Space') && !(document.activeElement && document.activeElement.tagName === 'BUTTON')) { e.preventDefault(); setRunning(true); } return; }
+  if (HANDLED.has(e.code)) e.preventDefault();
+  if (e.code === 'KeyM') { if (!e.repeat) toggleMap(); return; }
+  if (e.code === 'KeyR') { respawn(); toast(COURSE_NAME[course] + ' 출발점으로 돌아왔어요'); return; }
+  if (e.code === 'Enter') { e.preventDefault(); const nb = !RIDE.ph && nearBoard(); if (nb) startRide(nb); return; }
+  if (RIDE.ph) { if (e.code === 'Space' && !e.repeat && RIDE.ph === 'aerial') rideGo('out'); keys[e.code] = true; return; }   // 조감도 중 Space: 바로 암전
+  if (e.code === 'Space' && !e.repeat) P.jumpQ = 0.15;
+  keys[e.code] = true;
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+window.addEventListener('blur', () => { Object.keys(keys).forEach(k => keys[k] = false); if (running) setRunning(false); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && running) setRunning(false); });
+
+{
+  const rows = $('rows'), btn = $('tuneBtn'), panel = $('tune'), out = $('tOut'), inputs = {};
+  const fmt = (k, v) => k === 'drag' ? (v * 1000).toFixed(0) : (+v).toFixed(k === 'turn' ? 2 : 1);
+  const save = () => { try { localStorage.setItem('snowfolio-tune', JSON.stringify(tune)); } catch (e) {} };
+  TUNE_UI.forEach(u => {
+    const row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = '<label for="t_' + u.k + '">' + u.label + '</label><output id="o_' + u.k + '"></output><input type="range" id="t_' + u.k + '" min="' + u.min + '" max="' + u.max + '" step="' + u.step + '">' + (u.hint ? '<small>' + u.hint + '</small>' : '');
+    rows.appendChild(row);
+    const inp = row.querySelector('input'), o = row.querySelector('output'); inputs[u.k] = [inp, o];
+    inp.value = tune[u.k]; o.textContent = fmt(u.k, tune[u.k]);
+    inp.addEventListener('input', () => { tune[u.k] = parseFloat(inp.value); o.textContent = fmt(u.k, tune[u.k]); save(); });
+    inp.addEventListener('keydown', e => e.stopPropagation());
+  });
+  btn.addEventListener('click', () => { const open = panel.hidden; panel.hidden = !open; btn.setAttribute('aria-expanded', String(open)); if (open && running) setRunning(false); });
+  $('tReset').addEventListener('click', () => { Object.assign(tune, TUNE_DEF); TUNE_UI.forEach(u => { inputs[u.k][0].value = tune[u.k]; inputs[u.k][1].textContent = fmt(u.k, tune[u.k]); }); save(); });
+  $('tCopy').addEventListener('click', () => {
+    const txt = JSON.stringify(tune); out.value = txt;
+    const show = () => { out.hidden = false; out.focus(); out.select(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => toast('값을 복사했어요'), show); else show();
+  });
+}
+
+/* ───────── 리프트 탑승 ─────────
+   양쪽 정류장 노란 승차선에서 Enter → 의자가 와서 태움(약 2초) → 조감도(6초, Space로 건너뛰기) → 암전 → 반대쪽 정류장 구조물 바로 앞에서 내림.
+   올라가기는 lines[0](하부 → 상부), 내려가기는 lines[1](상부 → 하부). 보더가 탄 의자 하나(lift.ride.chair)가 케이블 위 거리 RIDE.cs를 따라간다. */
+const RIDE = { ph: null, t: 0, tA: 0, cs: 0, li: 0, chairOn: false, sit: 0, bar: 0, fade: 0, yaw: 0, h: 0, h0: 0, wasNear: null, cfg: null,
+  stand: new THREE.Vector3(), from: new THREE.Vector3(), camPt: new THREE.Vector3() };
+const FOG_N = scene.fog.near, FOG_F = scene.fog.far, fadeEl = $('fade');
+const rSeat = new THREE.Vector3(), rFwd = new THREE.Vector3(), rTmp = new THREE.Vector3(), rSide = new THREE.Vector3(), camFrom = new THREE.Vector3(), lookFrom = new THREE.Vector3(), rLook = new THREE.Vector3();
+const rqA = new THREE.Quaternion(), rqB = new THREE.Quaternion(), rm = new THREE.Matrix4(), rX = new THREE.Vector3(), rZ = new THREE.Vector3();
+const AERIAL_T = 6, AERIAL_RISE = 4.5;                               // 조감도 전체 시간, 그중 카메라가 올라가는 시간
+// 하차: 후드 아래 로컬 z 3.8에서 일어나 곧게 AL_STRAIGHT(→ 로컬 z −5.5, 펜스 출구 뒤)만큼 나간 뒤 AL_TURN 거리 동안 바깥쪽으로 90° 돈다(반지름 약 3m)
+const AL_STRAIGHT = 9.3, AL_TURN = 4.7, rCh = new THREE.Vector3();
+const ease5 = x => { x = clamp(x, 0, 1); return x * x * x * (x * (x * 6 - 15) + 10); };   // smootherstep: 처음과 끝이 더 느리다
+// 의자 좌석 윗면(가운데 자리) 위치와 진행 방향
+function seatAt(s, li) {
+  const yaw = liftAt(lift.lines[li === undefined ? RIDE.li : li], s, rSeat);
+  rFwd.set(Math.sin(yaw), 0, Math.cos(yaw)); rSeat.y -= 1.97; rSeat.addScaledVector(rFwd, 0.02);
+  return yaw;
+}
+function sForZ(li, z) {                                              // 케이블 위에서 z가 주어진 값이 되는 거리 s (z는 s에 따라 한 방향으로만 변한다)
+  const L = lift.lines[li], up = L.pts[L.pts.length - 1].z > L.pts[0].z; let lo = 0, hi = L.len;
+  for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; liftAt(L, m, rTmp); if ((rTmp.z < z) === up) lo = m; else hi = m; }
+  return (lo + hi) / 2;
+}
+// 승차선은 정류장 로컬 z 3.0(후드 아래), 하차는 정류장 로컬 z 7.5(후드·기둥 바깥 바로 앞). 하부 정류장 z 370, 상부 −378.
+const RIDES = [
+  { li: 0, sBoard: sForZ(0, 370 - 3.0), sOff: sForZ(0, -378 + 3.8), back: 70, high: 80, view: v3(62, H(62, -60) + 4, -60),
+    hint: '리프트 승차장 · Enter로 올라가기', done: '상부 정류장 도착 · W로 출발하세요' },
+  { li: 1, sBoard: sForZ(1, -378 + 3.0), sOff: sForZ(1, 370 - 3.8), back: 35, high: 90, view: v3(62, H(62, 90) + 4, 90),
+    hint: '리프트 승차장 · Enter로 내려가기', done: '하부 정류장 도착 · 베이스캠프예요' },
+];
+RIDES.forEach(c => {
+  seatAt(c.sBoard, c.li); c.G = rSeat.clone().addScaledVector(rFwd, 0.4); c.G.y = H(c.G.x, c.G.z); c.hBoard = Math.atan2(rFwd.x, rFwd.z) - Math.PI / 2;
+  c.F = rFwd.clone();                                                // 승차선에서 의자가 나가는 방향(정류장 앞쪽)
+  c.A = c.G.clone().addScaledVector(c.F, 3); c.A.y = H(c.A.x, c.A.z); // 승차선 바로 앞(후드 밖): 멀리서 오면 여기를 거쳐 승차선으로 미끄러져 들어간다
+  { const L = lift.lines[c.li], O = lift.lines[1 - c.li], o = O.pts[O.pts.length - 1]; c.C = v3((L.pts[0].x + o.x) / 2, 0, (L.pts[0].z + o.z) / 2); }   // 정류장 중심(불휠 아래)
+});
+// Enter 판정: 승차선 앞 지점 A에서 9m 안이면 뜬다(정류장 앞·옆 주변). 승차선보다 2m 넘게 뒤(불휠·뒤 펜스 쪽)는 제외.
+const BOARD_R = 9;
+function nearBoard() {
+  if (P.grind) return null;
+  for (const c of RIDES) {
+    const dx = P.pos.x - c.G.x, dz = P.pos.z - c.G.z, fw = dx * c.F.x + dz * c.F.z, side = Math.abs(dx * c.F.z - dz * c.F.x);
+    // 승차선보다 뒤(fw < 0.5)는 승차장 판재 위(옆으로 2.5m 안)만: 기둥 옆에서 들어오면 기둥을 뚫고 지나가게 되므로
+    const qx = P.pos.x - c.C.x, qz = P.pos.z - c.C.z, onDeck = Math.abs(qx * c.F.z - qz * c.F.x) < 4.3 && Math.abs(qx * c.F.x + qz * c.F.z - 0.6) < 4.5;   // 승하차장 판재 위(로컬 x ±4.2, z −3.8~5)
+    if (onDeck && P.pos.y < H(P.pos.x, P.pos.z) + 1.5) return c;
+    if (Math.hypot(P.pos.x - c.A.x, P.pos.z - c.A.z) < BOARD_R && fw > -2 && (fw > 0.5 || side < 2.5) && P.pos.y < H(P.pos.x, P.pos.z) + 1.5) return c;
+  }
+  return null;
+}
+function rideGo(ph) {
+  if (ph === 'out') RIDE.tA = RIDE.ph === 'aerial' ? RIDE.t : AERIAL_T;   // 조감도 도중 건너뛰면 그 지점부터 카메라가 이어서 움직인다
+  if (ph === 'aerial') {                                             // 조감도 출발점: 보더 기준 카메라의 방위각·수평거리·높이
+    camFrom.copy(cam.pos); lookFrom.copy(rLook);
+    const ox = cam.pos.x - P.pos.x, oz = cam.pos.z - P.pos.z;
+    RIDE.az0 = Math.atan2(ox, oz); RIDE.r0 = Math.hypot(ox, oz); RIDE.y0 = cam.pos.y - P.pos.y;
+  }
+  RIDE.ph = ph; RIDE.t = 0;
+}
+function startRide(c) {
+  RIDE.cfg = c; RIDE.li = c.li; RIDE.sit = 0; RIDE.bar = 0;
+  RIDE.from.copy(P.pos); RIDE.stand.copy(P.pos);
+  // 승차선까지 오는 시간(멀수록 길게, 초속 약 3.5m). 의자는 보더가 선 뒤 0.5초에 승차선에 오도록 출발 시점을 맞춘다(그 전엔 불휠에 숨어 있다).
+  // 승차선 앞쪽에서 오면 A를 거쳐 돌아 들어오고, 이미 승차장 판재 위(승차선 뒤쪽)면 승차선으로 곧장 간다
+  const fw = (P.pos.x - c.G.x) * c.F.x + (P.pos.z - c.G.z) * c.F.z;
+  RIDE.ctrl = fw > 0.5 ? c.A : c.G;
+  const len = Math.hypot(P.pos.x - RIDE.ctrl.x, P.pos.z - RIDE.ctrl.z) + Math.hypot(RIDE.ctrl.x - c.G.x, RIDE.ctrl.z - c.G.z);
+  RIDE.appT = clamp(len / 3.5, 0.8, 3);
+  RIDE.cs = Math.min(0, c.sBoard - LIFT_V * (RIDE.appT + 0.5)); RIDE.chairOn = RIDE.cs >= 0;
+  RIDE.h0 = P.heading; RIDE.h = P.heading;
+  P.vel.set(0, 0, 0); P.grounded = false; P.grind = null; P.jumpQ = 0; P.stun = 0; P.steer = 0; trackBreak = true;
+  rLook.copy(P.pos); rLook.y += 1;
+  rideGo('board');
+}
+function endRide() {
+  RIDE.ph = null; RIDE.chairOn = false; RIDE.sit = 0; RIDE.bar = 0; RIDE.fade = 0;
+  if (fadeEl) fadeEl.style.opacity = 0;
+  scene.fog.near = FOG_N; scene.fog.far = FOG_F;
+}
+function rideTick(dt) {
+  if (!RIDE.ph) {
+    if (RIDE.chairOn) { RIDE.cs += LIFT_V * dt; if (RIDE.cs >= lift.lines[RIDE.li].len) RIDE.chairOn = false; }   // 내린 뒤 빈 의자는 끝까지 가서 사라진다
+    const nb = nearBoard(); if (nb && nb !== RIDE.wasNear) toast(nb.hint, 2600); RIDE.wasNear = nb;
+    return;
+  }
+  const c = RIDE.cfg;
+  RIDE.t += dt; RIDE.cs += LIFT_V * dt;
+  const t = RIDE.t;
+  if (RIDE.ph === 'board') {
+    // 승차선 앞(A)을 거쳐 승차선(G)으로 미끄러져 와서 의자 쪽을 보고 선다. 2차 베지어 곡선이라 옆에서 와도 기둥을 돌아 들어온다.
+    const e = ss(0, RIDE.appT, t), u = 1 - e;
+    RIDE.stand.set(u * u * RIDE.from.x + 2 * u * e * RIDE.ctrl.x + e * e * c.G.x, 0, u * u * RIDE.from.z + 2 * u * e * RIDE.ctrl.z + e * e * c.G.z);
+    RIDE.stand.y = H(RIDE.stand.x, RIDE.stand.z);
+    RIDE.h = RIDE.h0 + angDiff(RIDE.h0, c.hBoard) * e;
+    if (!RIDE.chairOn && RIDE.cs >= 0) RIDE.chairOn = true;
+    if (RIDE.cs >= c.sBoard - 0.25 && t >= RIDE.appT) RIDE.sit = Math.min(1, RIDE.sit + dt / 0.4);
+    if (RIDE.sit >= 1) RIDE.bar = Math.min(1, RIDE.bar + dt / 0.8);
+    if (t >= RIDE.appT + 1.5 && RIDE.sit >= 1) rideGo('aerial');
+  } else if (RIDE.ph === 'aerial') {
+    RIDE.bar = Math.min(1, RIDE.bar + dt / 0.8);
+    if (t >= AERIAL_T) rideGo('out');
+  } else if (RIDE.ph === 'out') {
+    RIDE.bar = 1; RIDE.fade = clamp(t / 0.6, 0, 1);
+    if (t >= 0.6) {                                                  // 완전히 어두워지면 반대쪽 정류장 앞으로 옮긴다
+      RIDE.cs = c.sOff - LIFT_V * 2.3; RIDE.fade = 1;
+      scene.fog.near = FOG_N; scene.fog.far = FOG_F; RIDE.snap = true; rideGo('in');
+    }
+  } else if (RIDE.ph === 'in') {
+    RIDE.fade = 1 - ss(0.3, 0.9, t);
+    if (t >= 0.9) { RIDE.fade = 0; rideGo('arrive'); }
+  } else if (RIDE.ph === 'arrive') {
+    if (RIDE.cs > c.sOff - LIFT_V * 1.0) RIDE.bar = Math.max(0, RIDE.bar - dt / 0.7);   // 도착 전에 안전바를 올린다
+    if (RIDE.cs >= c.sOff) {                                         // 정류장 후드 아래 하차장에서 일어난다
+      const yaw = seatAt(RIDE.cs);
+      RIDE.stand.copy(rSeat).addScaledVector(rFwd, 0.4); RIDE.stand.y = H(RIDE.stand.x, RIDE.stand.z);
+      RIDE.th0 = yaw; RIDE.th = yaw; RIDE.h = yaw; RIDE.bar = 0; RIDE.dist = 0;
+      // 다 빠져나간 뒤 도는 방향: 케이블 사이가 아니라 바깥쪽(운영실 쪽)
+      const L = lift.lines[RIDE.li], O = lift.lines[1 - RIDE.li], E = L.pts[L.pts.length - 1];
+      const cx = (E.x + O.pts[0].x) / 2, cz = (E.z + O.pts[0].z) / 2;
+      RIDE.dir = (rSeat.x - cx) * Math.cos(yaw) - (rSeat.z - cz) * Math.sin(yaw) > 0 ? 1 : -1;
+      // 하차 카메라 자리: 정류장 중심에서 진행 방향으로 11.5m(펜스 출구 밖), 케이블 사이 쪽으로 1.5m, 높이 2.4m
+      const ox = RIDE.dir * Math.cos(yaw), oz = -RIDE.dir * Math.sin(yaw);
+      RIDE.camPt.set(cx + rFwd.x * 11.5 - ox * 1.5, 0, cz + rFwd.z * 11.5 - oz * 1.5);
+      RIDE.camPt.y = H(RIDE.camPt.x, RIDE.camPt.z) + 2.4;
+      RIDE.snap = true;                                              // 도착 카메라(정류장 앞)에서 바로 넘어간다(지붕을 뚫고 지나가지 않게)
+      rideGo('alight');
+    }
+  } else if (RIDE.ph === 'alight') {
+    // 실제 리프트처럼: 일어나서 의자 진행 방향 그대로 앞으로 미끄러져 나가 불휠 옆·펜스 출구를 지나 정류장 뒤로 빠지고,
+    // 빠져나간 뒤 바깥쪽으로 90° 돌며 속도를 줄인다. 의자는 불휠로 들어가 돌아 나간다.
+    RIDE.sit = 1 - ss(0, 0.7, t);
+    const d = RIDE.dist, inTurn = clamp((d - AL_STRAIGHT) / AL_TURN, 0, 1);
+    const v = d < AL_STRAIGHT ? lerp(LIFT_V, 3.2, ss(0, 3, d)) : lerp(3.2, 1.4, inTurn);   // 하차장 경사로 의자보다 빨리 빠져나가고, 돌면서 줄인다
+    if (RIDE.cs >= lift.lines[RIDE.li].len) RIDE.chairOn = false;   // 같이 들어온 빈 의자는 불휠에 닿으면 돌아 나간 것으로 보고 감춘다
+    RIDE.th = RIDE.th0 + RIDE.dir * Math.PI / 2 * ss(0, 1, inTurn);
+    RIDE.stand.x += Math.sin(RIDE.th) * v * dt; RIDE.stand.z += Math.cos(RIDE.th) * v * dt; RIDE.stand.y = H(RIDE.stand.x, RIDE.stand.z);
+    RIDE.dist += v * dt;
+    RIDE.h = RIDE.th;                                                // 보드 길이 방향 = 미끄러지는 방향
+    if (RIDE.dist >= AL_STRAIGHT + AL_TURN) {
+      const endH = RIDE.th0 + RIDE.dir * Math.PI / 2;
+      RIDE.ph = null; RIDE.sit = 0;
+      P.pos.copy(RIDE.stand); P.vel.set(Math.sin(endH) * 1.4, 0, Math.cos(endH) * 1.4); P.heading = endH; P.steer = 0; P.grounded = true; P.airTime = 0; P.stun = 0; P.jumpQ = 0; P.grindLock = 0.3;
+      cam.yaw = endH; cam.userYaw = 0; cam.userPitch = 0; accT = 0; trackBreak = true; RIDE.wasNear = nearBoard();
+      toast(c.done, 3000);
+    }
+  }
+  fadeEl.style.opacity = RIDE.fade;
+}
+// 탑승 중 보더: 서 있는 자세(stand, h)와 의자에 앉은 자세를 RIDE.sit으로 섞는다
+function rideRider(dt) {
+  RIDE.yaw = seatAt(RIDE.cs);
+  rTmp.copy(rSeat).addScaledVector(rFwd, 0.4); rTmp.y -= 0.5;          // 앉은 자세의 rig 원점(엉덩이가 좌석 위)
+  rZ.crossVectors(rFwd, UP); rm.makeBasis(rFwd, UP, rZ); rqB.setFromRotationMatrix(rm);
+  rZ.set(Math.sin(RIDE.h), 0, Math.cos(RIDE.h)); rX.crossVectors(UP, rZ); rm.makeBasis(rX, UP, rZ); rqA.setFromRotationMatrix(rm);
+  const k = ss(0, 1, RIDE.sit);
+  rig.position.lerpVectors(RIDE.stand, rTmp, k); rig.quaternion.copy(rqA).slerp(rqB, k);
+  leanRoll = 0; lean.rotation.z = 0; P.crouch = 0.3;
+  pose(0.3, 0, 0, k, RIDE.bar);
+  P.pos.copy(rig.position); P.speed = RIDE.sit > 0.5 ? LIFT_V : 0; P.grounded = false;
+  if (RIDE.sit <= 0) P.heading = RIDE.h;
+}
+function rideCamera(dt) {
+  const ph = RIDE.ph, c = RIDE.cfg;
+  rSide.set(rFwd.z, 0, -rFwd.x);                                      // 케이블 바깥쪽(정류장 후드 밖)
+  const chase = rTmp.copy(P.pos);                                     // 탑승: 정류장 앞에서 의자가 나오는 쪽을 본다 / 도착·하차: 뒤 옆에서
+  const tgtLook = v3(P.pos.x, P.pos.y + 1, P.pos.z);
+  if (ph === 'board') { chase.addScaledVector(rFwd, 6.5).addScaledVector(rSide, 3); chase.y += 1.6; }
+  else if (ph === 'alight') {
+    // 하차: 정류장 뒤 출구 밖(RIDE.camPt)에서 보더가 일어나 불휠 옆을 지나 빠져나오는 모습을 맞이하듯 보다가,
+    // 도는 동안 평소 카메라 자리(보더 진행 방향 뒤 9.2m, 위 3.3m)로 옮겨 가 조작을 넘길 때 튀지 않게 한다.
+    // (뒤따라가는 카메라는 같이 들어온 의자에 보더가 가려서 쓰지 않는다)
+    chase.copy(RIDE.camPt);
+    const hx = Math.sin(RIDE.th), hz = Math.cos(RIDE.th);
+    rCh.set(P.pos.x - hx * 9.2, P.pos.y + 3.3, P.pos.z - hz * 9.2);
+    const w = ss(0, 1, (RIDE.dist - AL_STRAIGHT) / AL_TURN);
+    chase.lerp(rCh, w);
+    tgtLook.x += hx * 5 * w; tgtLook.z += hz * 5 * w; tgtLook.y += 0.2 * w;
+  }
+  else { chase.addScaledVector(rFwd, -5.5).addScaledVector(rSide, 5); chase.y += 2.4; }   // 도착: 의자 뒤 바깥쪽에서 본다
+  if (ph === 'aerial' || ph === 'out') {                              // 보더 둘레를 옆으로 돌아 뒤로 빠지며(크레인처럼) 천천히 올라가 두 슬로프를 내려다본다
+    const ta = ph === 'aerial' ? RIDE.t : RIDE.tA + RIDE.t, e = ease5(ta / AERIAL_RISE), a = 0.35 + 0.06 * ta;
+    // 직선으로 옮기면 보더 바로 위를 지나가며 땅을 내려다보게 되므로, 방위각·거리·높이를 따로 섞어 둥근 궤적으로 움직인다
+    const ex = -c.back * Math.cos(a), es = c.back * Math.sin(a);
+    const azE = Math.atan2(rFwd.x * ex + rSide.x * es, rFwd.z * ex + rSide.z * es);
+    const az = RIDE.az0 + angDiff(RIDE.az0, azE) * e;
+    const ey = ease5((ta - 0.4) / (AERIAL_RISE - 0.4));                 // 높이는 살짝 늦게: 먼저 뒤로 빠지고 이어서 올라간다
+    const r = lerp(RIDE.r0, c.back, e), y = lerp(RIDE.y0, c.high, ey);
+    cam.pos.set(P.pos.x + Math.sin(az) * r, P.pos.y + y, P.pos.z + Math.cos(az) * r);
+    const gmin = H(cam.pos.x, cam.pos.z) + 2 + 18 * ey; if (cam.pos.y < gmin) cam.pos.y = gmin;
+    // 시선: 보는 '점'을 섞으면 가까운 보더→먼 경치로 옮길 때 각도가 한꺼번에 꺾인다. 방향(각도)을 고르게 돌린다.
+    rTmp.set(P.pos.x, P.pos.y + 1, P.pos.z).sub(cam.pos).normalize();
+    rX.copy(c.view).sub(cam.pos).normalize();
+    rqA.setFromUnitVectors(rTmp, rX); rqB.identity().slerp(rqA, ease5(ta / (AERIAL_RISE + 0.5)));
+    rTmp.applyQuaternion(rqB);
+    rLook.copy(cam.pos).addScaledVector(rTmp, 60);
+    scene.fog.near = lerp(FOG_N, 320, e); scene.fog.far = lerp(FOG_F, 1500, e);
+  } else {
+    if (RIDE.snap) { cam.pos.copy(chase); rLook.copy(tgtLook); RIDE.snap = false; }
+    else { cam.pos.lerp(chase, 1 - Math.exp(-dt * 5)); rLook.lerp(tgtLook, 1 - Math.exp(-dt * 8)); }
+    const gh = H(cam.pos.x, cam.pos.z) + 1.5; if (cam.pos.y < gh) cam.pos.y = gh;
+  }
+  camera.position.copy(cam.pos); camera.lookAt(rLook);
+  if (Math.abs(camera.fov - 58) > 0.01) { camera.fov += (58 - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix(); }
+}
+
+/* ───────── 미니맵 ─────────
+   시작할 때 월드를 바로 위에서 한 번 찍어(정사영) 지도 그림으로 쓰고, 매 프레임 내 위치와 카메라 방향에 맞춰 돌려 그린다.
+   화면 위쪽 = 카메라가 보는 방향. 지도 그림은 x(오른쪽) · z(아래쪽) 1m당 MM.PPM 픽셀, 왼쪽 위 모서리가 월드 (MM.X0, MM.Z0).
+   지도 그림 = 둘레의 그려 넣은 설산(PAD m) + 가운데 지형 메시 전체(TX·TZ 범위)를 찍은 사진. 사진 가장자리는 FEATHER m에 걸쳐 흐리게 섞는다. */
+const MM = { TX0: -230, TX1: 230, TZ0: -430, TZ1: 430, PAD: 200, FEATHER: 50, PPM: 2, SCALE: 1.0, img: null, base: '#e9eff6', fx: 0, fz: 1, big: false, BIG_W: 520, BIG_H: 920 };   // BIG_W·H: 펼친 지도에 담을 범위(m)
+MM.X0 = MM.TX0 - MM.PAD; MM.Z0 = MM.TZ0 - MM.PAD;
+const mmCv = $('minimap'), mmCtx = mmCv.getContext('2d'), mmDir = v3();
+// 지형 메시 전체를 바로 위에서 찍는다
+function mmShot() {
+  const W = Math.round((MM.TX1 - MM.TX0) * MM.PPM), Hh = Math.round((MM.TZ1 - MM.TZ0) * MM.PPM);
+  const oc = new THREE.OrthographicCamera(MM.TX0, MM.TX1, -MM.TZ0, -MM.TZ1, 1, 8000);
+  oc.position.set(0, 4000, 0); oc.up.set(0, 0, -1); oc.lookAt(0, 0, 0);          // 위에서 내려다봄: 화면 오른쪽 +x, 아래쪽 +z
+  // 그림자가 지도 전체에 고르게 지도록 그림자 범위·해상도를 잠깐 넓힌다(평소에는 보더 주변 ±55m, 2048)
+  const sh = sun.shadow, sc = sh.camera, keep = { left: sc.left, right: sc.right, top: sc.top, bottom: sc.bottom, far: sc.far };
+  const cy = H(0, 0);
+  Object.assign(sc, { left: -560, right: 560, top: 560, bottom: -560, far: 2600 }); sc.updateProjectionMatrix();
+  if (sh.map) { sh.map.dispose(); sh.map = null; } sh.mapSize.set(4096, 4096);
+  sun.target.position.set(0, cy, 0); sun.position.set(SUN_DIR.x * 1000, cy + SUN_DIR.y * 1000, SUN_DIR.z * 1000);
+  const fn = scene.fog.near, ff = scene.fog.far, pr = renderer.getPixelRatio();
+  scene.fog.near = 1e6; scene.fog.far = 2e6;
+  const hid = [sky, rig, flakePts].filter(o => o.visible); hid.forEach(o => { o.visible = false; });
+  renderer.setPixelRatio(1); renderer.setSize(W, Hh, false);
+  renderer.render(scene, oc);
+  const c = document.createElement('canvas'); c.width = W; c.height = Hh;
+  c.getContext('2d').drawImage(renderer.domElement, 0, 0);   // 같은 작업 안에서 바로 복사하므로 preserveDrawingBuffer 없이도 된다
+  hid.forEach(o => { o.visible = true; });
+  scene.fog.near = fn; scene.fog.far = ff;
+  Object.assign(sc, keep); sc.updateProjectionMatrix();
+  if (sh.map) { sh.map.dispose(); sh.map = null; } sh.mapSize.set(2048, 2048);
+  renderer.setPixelRatio(pr); resize();
+  return c;
+}
+// 사진 가장자리 띠에서 눈(밝은 픽셀) 평균색을 뽑아 둘레 설산의 기본색으로 쓴다(톤매핑된 색과 맞추기 위해)
+function mmSnowColor(c) {
+  const g = c.getContext('2d'), W = c.width, Hh = c.height, b = 24;
+  let r = 0, gg = 0, bl = 0, n = 0;
+  [[0, 0, W, b], [0, Hh - b, W, b], [0, 0, b, Hh], [W - b, 0, b, Hh]].forEach(([x, y, w, h]) => {
+    const d = g.getImageData(x, y, w, h).data;
+    for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 600) { r += d[i]; gg += d[i + 1]; bl += d[i + 2]; n++; }
+  });
+  return n ? [r / n, gg / n, bl / n] : [233, 239, 246];
+}
+// 지형 밖 설산: 능선 노이즈 높이장 + 해 방향 음영 + 가파른 곳 바위 + 아래쪽 가장자리 숲
+const mmHash = (i, j) => { let h = (Math.imul(i, 374761393) + Math.imul(j, 668265263)) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+function mmNoise(x, z) {
+  const i = Math.floor(x), j = Math.floor(z), fx = x - i, fz = z - j, u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz);
+  return lerp(lerp(mmHash(i, j), mmHash(i + 1, j), u), lerp(mmHash(i, j + 1), mmHash(i + 1, j + 1), u), v);
+}
+function mmFbm(x, z, oct) { let s = 0, a = 0.5, f = 1, n = 0; for (let k = 0; k < oct; k++) { s += a * mmNoise(x * f + k * 17.3, z * f - k * 9.1); n += a; a *= 0.5; f *= 2.03; } return s / n; }
+function mmEdge(x, z) {                                              // 지형 사각형 밖이면 +거리, 안이면 −(가장자리까지 거리)
+  const dx = Math.max(MM.TX0 - x, 0, x - MM.TX1), dz = Math.max(MM.TZ0 - z, 0, z - MM.TZ1);
+  return dx || dz ? Math.hypot(dx, dz) : -Math.min(x - MM.TX0, MM.TX1 - x, z - MM.TZ0, MM.TZ1 - z);
+}
+function mmMountH(x, z) {
+  const e = mmEdge(x, z), amp = 0.35 + 0.65 * ss(-30, 160, e);
+  const r = 1 - Math.abs(2 * mmFbm(x / 230, z / 230, 4) - 1);         // 능선(뾰족한 마루)
+  return amp * (85 * r * r + 30 * mmFbm(x / 70, z / 70, 3)) + 8 * mmFbm(x / 22, z / 22, 2) + 0.3 * Math.max(0, e);
+}
+function mmBackdrop(snow) {
+  const BW = Math.round((MM.TX1 - MM.TX0 + 2 * MM.PAD) * MM.PPM), BH = Math.round((MM.TZ1 - MM.TZ0 + 2 * MM.PAD) * MM.PPM);
+  const out = document.createElement('canvas'); out.width = BW; out.height = BH;
+  const og = out.getContext('2d');
+  // 1) 2m 격자에 높이장을 계산해 음영을 칠하고 크게 늘린다
+  const S = 2, gw = Math.ceil(BW / MM.PPM / S) + 1, gh = Math.ceil(BH / MM.PPM / S) + 1, hf = new Float32Array(gw * gh);
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) hf[j * gw + i] = mmMountH(MM.X0 + i * S, MM.Z0 + j * S);
+  const sm = document.createElement('canvas'); sm.width = gw; sm.height = gh;
+  const smg = sm.getContext('2d'), img = smg.createImageData(gw, gh), d = img.data;
+  const hi = snow.map(v => Math.min(255, v + 10)), lo = [snow[0] * 0.70, snow[1] * 0.77, snow[2] * 0.88], rock = [120, 136, 158];
+  const L = SUN_DIR, flat = L.y;
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
+    const k = j * gw + i, i0 = Math.max(i - 1, 0), i1 = Math.min(i + 1, gw - 1), j0 = Math.max(j - 1, 0), j1 = Math.min(j + 1, gh - 1);
+    const gx = (hf[j * gw + i1] - hf[j * gw + i0]) / ((i1 - i0) * S), gz = (hf[j1 * gw + i] - hf[j0 * gw + i]) / ((j1 - j0) * S);
+    const nl = Math.hypot(gx, 1, gz), dot = (-gx * L.x + L.y - gz * L.z) / nl;
+    let c;
+    if (dot >= flat) { const t = clamp((dot - flat) * 3, 0, 1); c = snow.map((v, q) => lerp(v, hi[q], t)); }
+    else { const t = clamp((flat - dot) * 2.2, 0, 1); c = snow.map((v, q) => lerp(v, lo[q], t)); }
+    const rk = ss(1.1, 1.8, Math.hypot(gx, gz)) * 0.55 * ss(0, 60, mmEdge(MM.X0 + i * S, MM.Z0 + j * S));
+    d[k * 4] = lerp(c[0], rock[0], rk); d[k * 4 + 1] = lerp(c[1], rock[1], rk); d[k * 4 + 2] = lerp(c[2], rock[2], rk); d[k * 4 + 3] = 255;
+  }
+  smg.putImageData(img, 0, 0);
+  og.imageSmoothingEnabled = true; og.imageSmoothingQuality = 'high';
+  og.drawImage(sm, 0, 0, gw, gh, 0, 0, gw * S * MM.PPM, gh * S * MM.PPM);
+  // 2) 지형 가장자리 바깥 낮은 비탈에 숲(덩어리지게, 멀어질수록 드물게). 해가 왼쪽 위(−x, −z)에 있으므로 그림자는 오른쪽 아래
+  const R = rng(77), trees = [];
+  for (let n = 0; n < 9000; n++) {
+    const x = MM.X0 + R() * (BW / MM.PPM), z = MM.Z0 + R() * (BH / MM.PPM), e = mmEdge(x, z);
+    if (e < -MM.FEATHER * 0.6 || e > 170) continue;
+    if (mmFbm(x / 45, z / 45, 3) < 0.47 + e / 520) continue;
+    const gx = mmMountH(x + 2, z) - mmMountH(x - 2, z), gz = mmMountH(x, z + 2) - mmMountH(x, z - 2);
+    if (Math.hypot(gx, gz) / 4 > 0.9) continue;
+    trees.push([(x - MM.X0) * MM.PPM, (z - MM.Z0) * MM.PPM, (2.4 + R() * 1.6) * MM.PPM]);   // 월드 안 나무(사진)와 비슷한 반지름 2.4~4m
+  }
+  trees.sort((a, b) => a[1] - b[1]);
+  og.fillStyle = 'rgba(40,62,92,.24)'; trees.forEach(([x, y, r]) => { og.beginPath(); og.ellipse(x + r * 0.9, y + r * 1.1, r * 1.1, r * 0.9, 0.6, 0, Math.PI * 2); og.fill(); });
+  og.fillStyle = '#2f6450'; trees.forEach(([x, y, r]) => { og.beginPath(); og.arc(x, y, r, 0, Math.PI * 2); og.fill(); });
+  og.fillStyle = 'rgba(240,246,252,.85)'; trees.forEach(([x, y, r]) => { og.beginPath(); og.arc(x - r * 0.3, y - r * 0.3, r * 0.45, 0, Math.PI * 2); og.fill(); });
+  return out;
+}
+function bakeMinimap() {
+  const shot = mmShot(), snow = mmSnowColor(shot), out = mmBackdrop(snow);
+  MM.base = 'rgb(' + snow.map(Math.round).join(',') + ')';
+  // 사진 네 변을 FEATHER m에 걸쳐 투명하게 지워 둘레 설산과 섞는다
+  const sg = shot.getContext('2d'), F = MM.FEATHER * MM.PPM, W = shot.width, Hh = shot.height;
+  sg.globalCompositeOperation = 'destination-out';
+  [[0, 0, F, 0, 0, 0, F, Hh], [W, 0, W - F, 0, W - F, 0, F, Hh], [0, 0, 0, F, 0, 0, W, F], [0, Hh, 0, Hh - F, 0, Hh - F, W, F]].forEach(([x0, y0, x1, y1, rx, ry, rw, rh]) => {
+    const gr = sg.createLinearGradient(x0, y0, x1, y1);
+    gr.addColorStop(0, 'rgba(0,0,0,1)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    sg.fillStyle = gr; sg.fillRect(rx, ry, rw, rh);
+  });
+  sg.globalCompositeOperation = 'source-over';
+  out.getContext('2d').drawImage(shot, MM.PAD * MM.PPM, MM.PAD * MM.PPM);
+  MM.img = out;
+}
+function drawMinimap() {
+  if (!MM.img) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2), w = Math.round(mmCv.clientWidth * dpr), h = Math.round(mmCv.clientHeight * dpr);
+  if (!w || !h) return;
+  if (mmCv.width !== w || mmCv.height !== h) { mmCv.width = w; mmCv.height = h; }
+  const g = mmCtx, big = MM.big;
+  camera.getWorldDirection(mmDir);
+  const l = Math.hypot(mmDir.x, mmDir.z); if (l > 0.15) { MM.fx = mmDir.x / l; MM.fz = mmDir.z / l; }   // 거의 수직으로 내려다볼 때는 이전 방향 유지
+  // 작은 지도: 카메라가 보는 방향이 위, 내 위치 중심. 펼친 지도(M): 정상(−z)이 위로 고정, 지형 전체가 들어오게.
+  let fx, fz, s, ccx, ccy, cX, cZ;
+  if (big) { fx = 0; fz = -1; s = Math.min(w / MM.BIG_W, h / MM.BIG_H); ccx = w / 2; ccy = h / 2; cX = 0; cZ = 0; }
+  else { fx = MM.fx; fz = MM.fz; s = MM.SCALE * dpr; ccx = w / 2; ccy = h * 0.6; cX = P.pos.x; cZ = P.pos.z; }   // 내 위치는 가운데보다 조금 아래(앞쪽이 더 보이게)
+  const rx = -fz, rz = fx, k = s / MM.PPM;                               // 화면 위·오른쪽 방향(월드)
+  const ox = MM.X0 - cX, oz = MM.Z0 - cZ;
+  const toX = (x, z) => ccx + s * (rx * (x - cX) + rz * (z - cZ)), toY = (x, z) => ccy - s * (fx * (x - cX) + fz * (z - cZ));
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = MM.base; g.fillRect(0, 0, w, h);
+  g.setTransform(k * rx, -k * fx, k * rz, -k * fz, ccx + s * (rx * ox + rz * oz), ccy - s * (fx * ox + fz * oz));
+  g.drawImage(MM.img, 0, 0);
+  // 펼친 지도: 주요 지점 이름
+  if (big) {
+    g.setTransform(1, 0, 0, 1, 0, 0); g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
+    MM_PLACES.forEach(p => {
+      const x = toX(p.x, p.z), y = toY(p.x, p.z);
+      if (p.dot) { g.beginPath(); g.arc(x, y, 4 * dpr, 0, Math.PI * 2); g.fillStyle = '#10263a'; g.strokeStyle = '#fff'; g.lineWidth = 2 * dpr; g.stroke(); g.fill(); }
+      // 이름 자리: 점 위(기본) · 오른쪽(r) · 아래(b)
+      const tx = p.side === 'r' ? x + 9 * dpr : x, ty = !p.dot || p.side === 'r' ? y : p.side === 'b' ? y + 15 * dpr : y - 14 * dpr;
+      g.textAlign = p.side === 'r' ? 'left' : 'center';
+      g.font = (p.main ? 700 : 600) + ' ' + (p.main ? 15 : 12) * dpr + "px 'Noto Sans KR', sans-serif";
+      g.strokeStyle = 'rgba(255,255,255,.92)'; g.lineWidth = 4 * dpr; g.strokeText(p.t, tx, ty);
+      g.fillStyle = p.c || '#10263a'; g.fillText(p.t, tx, ty);
+    });
+  }
+  // 내 위치: 시야 부채꼴(카메라 방향) + 보드 진행 방향 화살표
+  const ps = big ? 1.35 : 1, cr = big ? 34 : 46;
+  g.setTransform(dpr, 0, 0, dpr, toX(P.pos.x, P.pos.z), toY(P.pos.x, P.pos.z));
+  if (big) { g.beginPath(); g.arc(0, 0, 13 + 3 * Math.sin(time * 5), 0, Math.PI * 2); g.fillStyle = 'rgba(255,90,54,.22)'; g.fill(); }
+  g.save(); g.rotate(Math.atan2(MM.fx * rx + MM.fz * rz, MM.fx * fx + MM.fz * fz));
+  const cone = g.createRadialGradient(0, 0, 0, 0, 0, cr);
+  cone.addColorStop(0, 'rgba(255,90,54,.32)'); cone.addColorStop(1, 'rgba(255,90,54,0)');
+  g.fillStyle = cone; g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, cr, -Math.PI / 2 - 0.5, -Math.PI / 2 + 0.5); g.closePath(); g.fill();
+  g.restore();
+  const hx = Math.sin(P.heading), hz = Math.cos(P.heading);
+  g.rotate(Math.atan2(hx * rx + hz * rz, hx * fx + hz * fz)); g.scale(ps, ps);
+  g.beginPath(); g.moveTo(0, -8); g.lineTo(6, 6); g.lineTo(0, 3); g.lineTo(-6, 6); g.closePath();
+  g.fillStyle = '#ff5a36'; g.strokeStyle = '#ffffff'; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke(); g.fill();
+}
+// 펼친 지도에 쓰는 지점 이름(월드 좌표)
+const MM_PLACES = [
+  { t: '메인 슬로프', x: xc(-170), z: -170, main: true },
+  { t: '스노우 파크', x: PX, z: -170, main: true, c: '#c4401f' },
+  { t: '출발', x: xc(Z_START), z: Z_START + 14, dot: false },
+  { t: '파크 출발', x: PX, z: PZ_START + 14 },
+  { t: '리프트 상부', x: RIDES[1].C.x, z: RIDES[1].C.z, dot: true, side: 'r' },
+  { t: '리프트 하부', x: RIDES[0].C.x, z: RIDES[0].C.z, dot: true, side: 'r' },
+  { t: '베이스캠프', x: xc(368), z: 368, dot: true, main: true, side: 'b' },
+];
+const mmBox = mmCv.parentElement;
+function toggleMap(v) {
+  MM.big = v === undefined ? !MM.big : v;
+  mmBox.classList.toggle('big', MM.big); mmBox.setAttribute('aria-expanded', String(MM.big));
+}
+mmBox.addEventListener('click', () => toggleMap());
+
+/* ───────── 루프 ───────── */
+function resize() { const w = window.innerWidth, h = window.innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+window.addEventListener('resize', resize); resize();
+
+respawn();
+bakeMinimap();
+let last = performance.now(), accT = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; time += dt; U.uTime.value = time;
+  if (running) {
+    rideTick(dt);
+    if (!RIDE.ph) { accT += dt; while (accT >= STEP) { physics(STEP); accT -= STEP; } if (P.grounded && P.speed > 1.5) addTrack(rightV.x, rightV.z); else if (!P.grounded) trackBreak = true; }
+  }
+  if (RIDE.ph) { rideRider(dt); rideCamera(dt); } else { updateRider(dt); updateCamera(dt); }
+  const sx = Math.round(P.pos.x * 2) / 2, sz = Math.round(P.pos.z * 2) / 2;
+  sun.target.position.set(sx, P.pos.y, sz); sun.position.set(sx + SUN_DIR.x * 150, P.pos.y + SUN_DIR.y * 150, sz + SUN_DIR.z * 150);
+  sky.position.copy(camera.position);
+  updateLift(time);
+  updateParticles(dt, fwdV, rightV); updateFlakes(dt); updateHud(dt); drawMinimap();
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+window.__snow = { P, tune, keys, H, respawn, setRunning, cam, renderer, JIB_LINES, PX, RIDE, RIDES, startRide, rideGo };
+})();
+</script>
+
+</html>
