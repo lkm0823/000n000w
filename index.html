@@ -1079,14 +1079,16 @@ function pose(c, steer, air, sit, bar) {
 }
 
 /* ───────── 상태 / 튜닝 ───────── */
-const TUNE_DEF = { g: 20, turn: 1, grip: 5.5, drag: 0.008, jump: 8, push: 6 };
+const TUNE_DEF = { g: 20, turn: 1, grip: 5.5, drag: 0.008, jump: 8, push: 6, trail: 1.3, spark: 1 };
 const TUNE_UI = [
   { k: 'g', label: '중력(내리막 가속)', min: 8, max: 40, step: 0.5, hint: '높이면 더 빨리 내려가고 점프 후 빨리 떨어집니다' },
   { k: 'turn', label: '회전 속도', min: 0.5, max: 2, step: 0.05, hint: '배율. 1.0이 기본' },
   { k: 'grip', label: '엣지 그립', min: 1, max: 14, step: 0.5, hint: '낮으면 미끄러지고, 높으면 레일처럼 붙습니다' },
   { k: 'drag', label: '공기저항', min: 0.002, max: 0.02, step: 0.001, hint: '낮으면 최고 속도가 올라갑니다' },
   { k: 'jump', label: '점프 힘', min: 4, max: 14, step: 0.5, hint: '' },
-  { k: 'push', label: '밀기 가속', min: 2, max: 14, step: 0.5, hint: 'W로 출발할 때의 가속' }
+  { k: 'push', label: '밀기 가속', min: 2, max: 14, step: 0.5, hint: 'W로 출발할 때의 가속' },
+  { k: 'trail', label: '트레일 길이', min: 0, max: 3, step: 0.1, hint: '주황 꼬리가 남는 시간(초). 빠를수록 길게 남고, 0이면 끕니다' },
+  { k: 'spark', label: '트레일 반짝임', min: 0, max: 2, step: 0.1, hint: '꼬리 위 반짝임과 흩날리는 불꽃의 양. 0이면 끕니다' }
 ];
 const tune = Object.assign({}, TUNE_DEF);
 try { const s = JSON.parse(localStorage.getItem('snowfolio-tune') || 'null'); if (s) TUNE_UI.forEach(u => { if (typeof s[u.k] === 'number') tune[u.k] = clamp(s[u.k], u.min, u.max); }); } catch (e) {}
@@ -1107,7 +1109,7 @@ function respawn(c) {
   P.pos.set(x, H(x, z), z); P.vel.set(0, 0, 0); P.heading = 0; P.steer = 0; startY = P.pos.y; P.sw = false; P.swB = 0;
   P.grounded = true; P.airTime = 0; P.stun = 0; P.shake = 0; P.grind = null; P.grindLock = 0; arrived = false; snapCam = true;
   cam.yaw = 0; cam.userYaw = 0; cam.userPitch = 0;
-  clearTrack();
+  clearTrack(); clearGlow();
   endRide();
 }
 
@@ -1385,6 +1387,128 @@ function addTrack(rx, rz) {
     if (i > 0 && !p.brk) { const a = (i - 1) * 2; tIdx.set([a, a + 1, a + 2, a + 1, a + 3, a + 2], n * 6); n++; }
   }
   tGeo.attributes.position.needsUpdate = true; tGeo.index.needsUpdate = true; tGeo.setDrawRange(0, n * 6);
+}
+
+/* 주황 트레일(2026-11-27): 보드 뒤로 반투명한 빛 꼬리. 시간 기준(tune.trail 초)이라 빠를수록 길게 남는다. 공중에서도 따라온다 */
+const GMAX = 700, GW = 0.24, gPts = [], gGeo = new THREE.BufferGeometry();
+const gPos = new Float32Array(GMAX * 6), gA = new Float32Array(GMAX * 2), gV = new Float32Array(GMAX * 2), gU = new Float32Array(GMAX * 2), gIdx = new Uint16Array((GMAX - 1) * 6);
+for (let i = 0; i < GMAX; i++) gV[i * 2 + 1] = 1;                     // v: 폭 방향 0~1, u: 꼬리를 따라 잰 거리(m, 반짝임 칸 나누기용)
+gGeo.setAttribute('position', new THREE.BufferAttribute(gPos, 3).setUsage(THREE.DynamicDrawUsage));
+gGeo.setAttribute('a', new THREE.BufferAttribute(gA, 1).setUsage(THREE.DynamicDrawUsage));
+gGeo.setAttribute('u', new THREE.BufferAttribute(gU, 1).setUsage(THREE.DynamicDrawUsage));
+const gK = new Float32Array(GMAX * 2);                                // k: 신선도(1 = 막 생김, 0 = 사라짐)
+gGeo.setAttribute('k', new THREE.BufferAttribute(gK, 1).setUsage(THREE.DynamicDrawUsage));
+gGeo.setAttribute('v', new THREE.BufferAttribute(gV, 1));
+gGeo.setIndex(new THREE.BufferAttribute(gIdx, 1).setUsage(THREE.DynamicDrawUsage));
+// 섞는 방식(11-27 수정): 반투명으로 얹으면 흰 눈 위에서 파스텔이 되므로, 색유리처럼 눈 색에 곱한다.
+//   결과 = 바탕 × (색 + 알파). 색 < 1이면 눈이 물들고(결·음영은 그대로 비침), 알파를 주면 그 자리만 밝아진다(반짝임).
+// 모양: 노이즈 무늬가 보드 쪽에서 뒤로 흐르고, 가장자리가 일렁이며, 오래된 쪽부터 무늬대로 듬성듬성 흩어져 사라진다.
+// 색: 막 생긴 곳은 노랑기 도는 밝은 주황 → 주황 → 식으면서 붉은 기.
+const glow = new THREE.Mesh(gGeo, new THREE.ShaderMaterial({         // 셰이더 출력은 화면 색 그대로(톤매핑·색 변환 없음)
+  uniforms: { uTime: { value: 0 }, uSpark: { value: 1 } },
+  vertexShader: 'attribute float a; attribute float k; attribute float u; attribute float v; varying float vA; varying float vK; varying float vU; varying float vV; void main() { vA = a; vK = k; vU = u; vV = v; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: [
+    'uniform float uTime; uniform float uSpark; varying float vA; varying float vK; varying float vU; varying float vV;',
+    'float hs(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }',
+    'float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);',
+    '  return mix(mix(hs(i), hs(i + vec2(1.0, 0.0)), f.x), mix(hs(i + vec2(0.0, 1.0)), hs(i + vec2(1.0, 1.0)), f.x), f.y); }',
+    'void main() {',
+    '  float n = 0.62 * vn(vec2(vU * 1.3 + uTime * 1.6, vV * 2.2)) + 0.38 * vn(vec2(vU * 3.8 + uTime * 3.1, vV * 5.0 + 3.0));',
+    '  float ev = abs(vV * 2.0 - 1.0) + (n - 0.5) * (0.25 + 0.45 * (1.0 - vK));',     // 가장자리 일렁임(꼬리일수록 크게)
+    '  float body = smoothstep(1.0, 0.25, ev);',
+    '  float thr = pow(1.0 - vK, 1.3) * 0.95;',                                         // 오래될수록 무늬가 진한 곳만 남는다
+    '  float mask = smoothstep(thr - 0.18, thr + 0.12, n);',
+    '  float str = clamp(vA * body * mask * pow(vK, 0.55) * (0.7 + 0.45 * n), 0.0, 1.0);',
+    '  vec3 hot = vec3(1.0, 0.74, 0.34), mid = vec3(1.0, 0.40, 0.20), cold = vec3(0.86, 0.22, 0.17);',
+    '  vec3 col = vK > 0.6 ? mix(mid, hot, (vK - 0.6) / 0.4) : mix(cold, mid, vK / 0.6);',
+    '  vec3 tint = mix(vec3(1.0), col, str * 0.9);',
+    '  vec2 g = vec2(vU * 5.0, vV * 3.0), id = floor(g), f = fract(g) - 0.5;',          // 반짝임: 0.2m × 폭 1/3 칸 중 일부가 깜빡인다
+    '  float h = hs(id + 7.0);',
+    '  float tw = pow(max(0.0, sin(uTime * (5.0 + h * 9.0) + h * 40.0)), 6.0);',
+    '  float sp = smoothstep(0.24, 0.0, length(f)) * step(0.5, h) * tw * uSpark * str;',
+    '  gl_FragColor = vec4(mix(tint, vec3(1.0, 0.96, 0.82), clamp(sp, 0.0, 1.0)), clamp(sp * 0.6, 0.0, 1.0));',
+    '}'].join('\n'),
+  transparent: true, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+  blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.DstColorFactor, blendDst: THREE.SrcAlphaFactor
+}));
+glow.frustumCulled = false; glow.renderOrder = 2; scene.add(glow);
+
+// 흩날리는 불꽃: 보드 뒤에서 작은 주황·연노랑 점이 튀었다가 깜빡이며 사라진다. 빠를수록·공중일수록 많다
+const SPK = 220, sPos = new Float32Array(SPK * 3), sA = new Float32Array(SPK), sS = new Float32Array(SPK), sC = new Float32Array(SPK);
+const sparks = Array.from({ length: SPK }, () => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, t: 0, life: 0, sz: 0, ph: 0 }));
+const sGeo = new THREE.BufferGeometry();
+sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3).setUsage(THREE.DynamicDrawUsage));
+sGeo.setAttribute('a', new THREE.BufferAttribute(sA, 1).setUsage(THREE.DynamicDrawUsage));
+sGeo.setAttribute('s', new THREE.BufferAttribute(sS, 1).setUsage(THREE.DynamicDrawUsage));
+sGeo.setAttribute('c', new THREE.BufferAttribute(sC, 1).setUsage(THREE.DynamicDrawUsage));
+const sparkPts = new THREE.Points(sGeo, new THREE.ShaderMaterial({
+  uniforms: { uCol: { value: new THREE.Color('#ff5a36') }, uHi: { value: new THREE.Color('#ffe9a8') }, uScale: { value: 600 } },
+  vertexShader: 'attribute float a; attribute float s; attribute float c; uniform float uScale; varying float vA; varying float vC; void main() { vA = a; vC = c; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = max(1.5, s * uScale / -mv.z); gl_Position = projectionMatrix * mv; }',
+  // 트레일과 같은 곱하기 방식: 주황 불꽃은 바탕을 물들이고, 연노랑 불꽃은 바탕을 밝힌다(흰 눈 위에서도 파스텔이 되지 않게)
+  fragmentShader: 'uniform vec3 uCol; uniform vec3 uHi; varying float vA; varying float vC; void main() { float d = length(gl_PointCoord - 0.5); float k = smoothstep(0.5, 0.0, d) * vA; vec3 t = mix(vec3(1.0), mix(uCol, uHi, vC), k * 0.9); gl_FragColor = vec4(t, k * vC * 0.7); }',
+  transparent: true, depthWrite: false,
+  blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.DstColorFactor, blendDst: THREE.SrcAlphaFactor
+}));
+sparkPts.frustumCulled = false; sparkPts.renderOrder = 3; scene.add(sparkPts);
+let sparkAcc = 0, sparkNext = 0;
+function updateSparks(dt, active) {
+  sparkPts.material.uniforms.uScale.value = renderer.domElement.height * 0.5 / Math.tan(camera.fov * Math.PI / 360);
+  if (active && tune.spark > 0 && P.speed > 3) {
+    const rate = tune.spark * (10 + 30 * ss(3, 25, P.speed)) * (P.grounded ? 1 : 1.8);   // 초당 개수
+    sparkAcc += rate * dt;
+    const hs = Math.max(0.1, Math.hypot(P.vel.x, P.vel.z)), bx = -P.vel.x / hs, bz = -P.vel.z / hs;   // 진행 반대쪽 = 보드 뒤
+    while (sparkAcc >= 1) {
+      sparkAcc -= 1;
+      const p = sparks[sparkNext]; sparkNext = (sparkNext + 1) % SPK;
+      const r = (Math.random() - 0.5) * 0.5;
+      p.x = rig.position.x + bx * 0.5 + bz * r; p.y = rig.position.y + 0.08 + Math.random() * 0.15; p.z = rig.position.z + bz * 0.5 - bx * r;
+      p.vx = P.vel.x * 0.15 + (Math.random() - 0.5) * 1.2; p.vy = 0.6 + Math.random() * 1.4; p.vz = P.vel.z * 0.15 + (Math.random() - 0.5) * 1.2;
+      p.t = 0; p.life = 0.45 + Math.random() * 0.55; p.sz = 0.035 + Math.random() * 0.05; p.ph = Math.random() * 6.28;
+      p.c = Math.random() < 0.45 ? 1 : 0;                              // 절반쯤은 연노랑, 나머지는 주황
+    }
+  } else sparkAcc = 0;
+  for (let i = 0; i < SPK; i++) {
+    const p = sparks[i];
+    if (p.t >= p.life) { sA[i] = 0; continue; }
+    p.t += dt; p.vy -= 2.2 * dt; const k = Math.exp(-dt * 1.5); p.vx *= k; p.vz *= k;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+    const f = clamp(1 - p.t / p.life, 0, 1), tw = 0.55 + 0.45 * Math.sin(p.t * 38 + p.ph);
+    sPos[i * 3] = p.x; sPos[i * 3 + 1] = p.y; sPos[i * 3 + 2] = p.z;
+    sA[i] = 0.9 * f * tw; sS[i] = p.sz * (0.5 + 0.5 * f); sC[i] = p.c;
+  }
+  sGeo.attributes.position.needsUpdate = true; sGeo.attributes.a.needsUpdate = true; sGeo.attributes.s.needsUpdate = true; sGeo.attributes.c.needsUpdate = true;
+}
+
+let glowT = 0, glowBreak = true;
+function clearGlow() { gPts.length = 0; glowBreak = true; gGeo.setDrawRange(0, 0); sparks.forEach(p => { p.t = p.life = 0; }); sA.fill(0); sparkAcc = 0; }
+function updateGlow(dt, active) {
+  updateSparks(dt, active);
+  const life = tune.trail;
+  glow.material.uniforms.uTime.value = time; glow.material.uniforms.uSpark.value = tune.spark;
+  if (life <= 0) { if (gPts.length) { gPts.length = 0; gGeo.setDrawRange(0, 0); } return; }
+  glowT += dt;
+  while (gPts.length && glowT - gPts[0].t > life) gPts.shift();
+  if (active && P.speed > 0.8) {
+    const x = rig.position.x, y = rig.position.y + 0.06, z = rig.position.z, l = gPts[gPts.length - 1];
+    if (glowBreak || !l || Math.hypot(l.x - x, l.y - y, l.z - z) > 0.2) {
+      const hs = Math.hypot(P.vel.x, P.vel.z);
+      let wx = rightV.x, wz = rightV.z; if (hs > 0.3) { wx = P.vel.z / hs; wz = -P.vel.x / hs; }   // 폭 = 진행 방향에 수직
+      const onSnow = P.grounded && !P.grind;
+      const sl = onSnow ? (H(x + wx * GW, z + wz * GW) - H(x - wx * GW, z - wz * GW)) / (2 * GW) : 0;   // 옆 경사를 따라 눕힌다(하프파이프 벽 등)
+      const d = l ? l.d + Math.hypot(l.x - x, l.y - y, l.z - z) : 0;
+      gPts.push({ x, y, z, wx, wz, sl, d: d % 1000, t: glowT, s: ss(1, 14, P.speed), brk: glowBreak }); glowBreak = false;
+      if (gPts.length > GMAX) gPts.shift();
+    }
+  } else glowBreak = true;
+  let n = 0;
+  for (let i = 0; i < gPts.length; i++) {
+    const p = gPts[i], k = clamp(1 - (glowT - p.t) / life, 0, 1);
+    const w = GW * (0.35 + 0.65 * k);                                  // 꼬리로 갈수록 가늘게(옅어지는 건 셰이더에서)
+    gPos.set([p.x + p.wx * w, p.y + p.sl * w, p.z + p.wz * w, p.x - p.wx * w, p.y - p.sl * w, p.z - p.wz * w], i * 6);
+    gA[i * 2] = gA[i * 2 + 1] = 0.35 + 0.65 * p.s; gK[i * 2] = gK[i * 2 + 1] = k; gU[i * 2] = gU[i * 2 + 1] = p.d;
+    if (i > 0 && !p.brk && p.d > gPts[i - 1].d) { const b = (i - 1) * 2; gIdx.set([b, b + 1, b + 2, b + 1, b + 3, b + 2], n * 6); n++; }
+  }
+  gGeo.attributes.position.needsUpdate = true; gGeo.attributes.a.needsUpdate = true; gGeo.attributes.u.needsUpdate = true; gGeo.attributes.k.needsUpdate = true; gGeo.index.needsUpdate = true; gGeo.setDrawRange(0, n * 6);
 }
 
 /* ───────── 카메라 ───────── */
@@ -1932,6 +2056,7 @@ function frame(now) {
     if (!RIDE.ph) { accT += dt; while (accT >= STEP) { physics(STEP); accT -= STEP; } if (P.grounded && P.speed > 1.5) addTrack(rightV.x, rightV.z); else if (!P.grounded) trackBreak = true; }
   }
   if (RIDE.ph) { rideRider(dt); rideCamera(dt); updateHead(dt, ss(0, 1, RIDE.sit)); } else { updateRider(dt); updateCamera(dt); updateHead(dt, 0); }
+  if (running) updateGlow(dt, !RIDE.ph);
   const sx = Math.round(P.pos.x * 2) / 2, sz = Math.round(P.pos.z * 2) / 2;
   sun.target.position.set(sx, P.pos.y, sz); sun.position.set(sx + SUN_DIR.x * 150, P.pos.y + SUN_DIR.y * 150, sz + SUN_DIR.z * 150);
   sky.position.copy(camera.position);
