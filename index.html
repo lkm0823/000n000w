@@ -1026,6 +1026,8 @@ function limb(mesh, a, b, r) {
   _d.copy(b).sub(a); const len = Math.max(0.001, _d.length());
   mesh.scale.set(r, len, r); mesh.quaternion.setFromUnitVectors(UP, _d.divideScalar(len));
 }
+// 머리 방향(lean 기준 y축 각도, 0 = 가슴 쪽 +x, -π/2 = 노즈 +z, +π/2 = 테일 -z)과 끄덕임. base = 이번 프레임 가슴 방향
+const HEAD = { y: -Math.PI / 2, p: 0, base: -0.4, side: 0 };
 // sit: 0 = 서서 타기, 1 = 리프트 의자에 앉기(보드는 그대로 발에 붙어 매달림). bar: 안전바 내림 정도(손 위치)
 function pose(c, steer, air, sit, bar) {
   sit = sit || 0; bar = bar || 0;
@@ -1046,18 +1048,24 @@ function pose(c, steer, air, sit, bar) {
   const mid = hc.clone().add(sc).multiplyScalar(0.5), dir = sc.clone().sub(hc), len = dir.length();
   dir.divideScalar(len);
   pelvis.position.set(hc.x - 0.01, hc.y + 0.02, 0); pelvis.scale.set(0.15, 0.13, 0.22);
-  // 어깨를 진행 방향(+z) 쪽으로 살짝 열기: 참고 이미지처럼 몸이 비스듬히 아래를 봄
-  const tw = (0.38 + 0.12 * c) * (1 - sit), ct = Math.cos(tw), st = Math.sin(tw);
+  // 어깨를 진행 방향 쪽으로 살짝 열기: 참고 이미지처럼 몸이 비스듬히 아래를 봄.
+  // 스탠스(P.swB): 0 = 구피(오른발이 노즈 쪽, +z로 진행), 1 = 레귤러(왼발 앞, 테일 쪽 -z로 진행) → 어깨를 반대로 열고 앞팔·뒷팔을 바꾼다
+  const sw = P.swB, f = 1 - 2 * sw;
+  const tw0 = (0.38 + 0.12 * c) * (1 - sit) * f;
+  HEAD.base = -tw0;
+  const tw = tw0 - clamp(HEAD.y + tw0, -1.6, 1.6) * 0.22 * (1 - 0.6 * sit), ct = Math.cos(tw), st = Math.sin(tw);   // 고개를 많이 돌리면 어깨도 조금 따라 돈다
   chest.position.copy(mid).add(v3(0, 0.03, 0)); chest.quaternion.setFromUnitVectors(UP, dir); chest.scale.set(1, len * 0.64 / 0.36, 1);
   chest.quaternion.multiply(qTw.setFromAxisAngle(UP, -tw));
   pelvis.rotation.y = -tw * 0.45;
   [1, -1].forEach((sg, i) => {
     const sh = sc.clone().add(v3(-0.23 * st * sg, -0.05, 0.23 * ct * sg));
-    const lift = (sg > 0 ? steer : -steer) * 0.22 + air * 0.3;
-    // 앞팔: 앞 무릎 쪽으로 내려 노즈를 가리킴 / 뒷팔: 팔꿈치 굽혀 허리 앞. 공중에선 옆으로 벌림
-    const hd = sh.clone().add(sg > 0 ? v3(0.16 + 0.08 * c, -0.5 + lift, 0.16 + air * 0.22) : v3(0.24 + 0.06 * c, -0.42 + lift, -0.06 - air * 0.3));
+    const liftF = steer * f * 0.22 + air * 0.3, liftB = -steer * f * 0.22 + air * 0.3;
+    // 앞팔: 앞 무릎 쪽으로 내려 진행 방향을 가리킴 / 뒷팔: 팔꿈치 굽혀 허리 앞. 공중에선 옆으로 벌림. s = +1 구피 기준, -1 레귤러(거울)
+    const armF = s => v3(0.16 + 0.08 * c, -0.5 + liftF, s * (0.16 + air * 0.22)), armB = s => v3(0.24 + 0.06 * c, -0.42 + liftB, -s * (0.06 + air * 0.3));
+    const hd = sh.clone().add((sg > 0 ? armF(1) : armB(1)).lerp(sg < 0 ? armF(-1) : armB(-1), sw));
     if (sit > 0) hd.lerp(v3(lerp(-0.12, 0.08, bar), lerp(0.77, 0.85, bar), sg * lerp(0.2, 0.3, bar)), sit);   // 앉으면 허벅지 위 → 안전바
-    const el = sh.clone().add(hd).multiplyScalar(0.5).add(sg > 0 ? v3(-0.03, -0.02, 0.08) : v3(-0.1, -0.02, -0.06));
+    const elF = s => v3(-0.03, -0.02, 0.08 * s), elB = s => v3(-0.1, -0.02, -0.06 * s);
+    const el = sh.clone().add(hd).multiplyScalar(0.5).add((sg > 0 ? elF(1) : elB(1)).lerp(sg < 0 ? elF(-1) : elB(-1), sw));
     limb(uArm[i], sh, el, 0.068); limb(fArm[i], el, hd, 0.06);
     shJ[i].position.copy(sh); shJ[i].scale.setScalar(0.082);
     elJ[i].position.copy(el); elJ[i].scale.setScalar(0.064);
@@ -1085,7 +1093,9 @@ try { const s = JSON.parse(localStorage.getItem('snowfolio-tune') || 'null'); if
 const MU = 0.055, PUSH_MAX = 11, BOOST = 6, BRAKE = 12, SCRUB = 0.15;
 
 const P = { pos: new THREE.Vector3(), vel: new THREE.Vector3(), heading: 0, steer: 0, grounded: true, coyote: 0, jumpQ: 0, jumpLock: 0, airTime: 0, airSpin: 0, speed: 0, lat: 0, shake: 0, stun: 0, crouch: 0.3,
-  grind: null, gs: 0, gv: 0, grindT: 0, grindLock: 0 };          // grind: 타고 있는 레일·박스(JIB_LINES 항목), gs: 선분 위 거리, gv: 선분 방향 속도
+  grind: null, gs: 0, gv: 0, grindT: 0, grindLock: 0,
+  sw: false, swB: 0 };                                               // sw: 테일 쪽으로 타는 중(레귤러, 왼발 앞). 기본은 구피(오른발 앞). swB: 자세용 부드러운 값
+const stanceName = () => P.sw ? '레귤러(왼발 앞)' : '구피(오른발 앞)';          // grind: 타고 있는 레일·박스(JIB_LINES 항목), gs: 선분 위 거리, gv: 선분 방향 속도
 const keys = {};
 let running = false, started = false, arrived = false, time = 0, snapCam = true, course = 'main', startY = 0;
 const cam = { yaw: 0, userYaw: 0, userPitch: 0, pos: new THREE.Vector3(), want: new THREE.Vector3(), look: new THREE.Vector3() };
@@ -1094,7 +1104,7 @@ const COURSE_NAME = { main: '메인 슬로프', park: '스노우 파크' };
 function respawn(c) {
   if (c) course = c;
   const z = course === 'park' ? PZ_START : Z_START, x = course === 'park' ? PX : xc(z);
-  P.pos.set(x, H(x, z), z); P.vel.set(0, 0, 0); P.heading = 0; P.steer = 0; startY = P.pos.y;
+  P.pos.set(x, H(x, z), z); P.vel.set(0, 0, 0); P.heading = 0; P.steer = 0; startY = P.pos.y; P.sw = false; P.swB = 0;
   P.grounded = true; P.airTime = 0; P.stun = 0; P.shake = 0; P.grind = null; P.grindLock = 0; arrived = false; snapCam = true;
   cam.yaw = 0; cam.userYaw = 0; cam.userPitch = 0;
   clearTrack();
@@ -1125,8 +1135,9 @@ function physics(dt) {
     fwd.set(Math.sin(P.heading), 0, Math.cos(P.heading)); fwd.addScaledVector(nrm, -fwd.dot(nrm)).normalize();
     acc.set(0, -1, 0).addScaledVector(nrm, nrm.y).multiplyScalar(tune.g);
     P.vel.addScaledVector(acc, dt);
-    if (inp.push && P.vel.dot(fwd) < PUSH_MAX) P.vel.addScaledVector(fwd, tune.push * dt * ctl);
-    if (inp.boost) P.vel.addScaledVector(fwd, BOOST * dt * ctl);
+    const fd = P.sw ? -1 : 1;                                         // 레귤러(테일 쪽으로 진행)면 밀기·부스트도 테일 쪽으로
+    if (inp.push && P.vel.dot(fwd) * fd < PUSH_MAX) P.vel.addScaledVector(fwd, tune.push * fd * dt * ctl);
+    if (inp.boost) P.vel.addScaledVector(fwd, BOOST * fd * dt * ctl);
     let s = P.vel.length();
     const pipeK = pipeW(P.pos.z) > 0.6 && Math.abs(P.pos.x - PX) < PIPE.lip + 0.5 ? 0.3 : 1;   // 하프파이프 안은 마찰·스크럽을 줄여 벽을 여러 번 탈 수 있게
     if (s > 1e-4) { let dec = MU * tune.g * nrm.y * pipeK + tune.drag * s * s; if (inp.brake) dec += BRAKE; s = Math.max(0, s - dec * dt); P.vel.setLength(s); }
@@ -1135,6 +1146,7 @@ function physics(dt) {
     if (s > 0.05) {
       tA.copy(P.vel).divideScalar(s);
       const d = tA.dot(fwd), sg = d >= 0 ? 1 : -1, t = 1 - Math.exp(-tune.grip * (inp.brake ? 0.5 : 1) * dt);
+      if (s > 2 && Math.abs(d) > 0.5 && (d < 0) !== P.sw) { P.sw = d < 0; toast(stanceName() + ' 스탠스'); }   // 반대 방향으로 미끄러져 가면 그대로 스탠스가 바뀐다
       tB.copy(fwd).multiplyScalar(sg); tA.lerp(tB, t).normalize();
       const sinA = Math.sqrt(Math.max(0, 1 - d * d));
       P.lat = sinA * s; s *= 1 - SCRUB * pipeK * sinA * t;
@@ -1182,7 +1194,12 @@ function land(h) {
   N(P.pos.x, P.pos.z, nrm); P.pos.y = h;
   const impact = -P.vel.dot(nrm); P.vel.addScaledVector(nrm, -P.vel.dot(nrm));
   P.grounded = true;
-  if (P.airTime > 0.5) { const deg = Math.round(Math.abs(P.airSpin) * 180 / Math.PI / 45) * 45; toast((deg >= 90 ? deg + '° 스핀 · ' : '') + '체공 ' + P.airTime.toFixed(1) + '초'); }
+  // 착지 방향으로 스탠스를 정한다: 테일 쪽으로 내려앉으면 레귤러(왼발 앞)로 그대로 이어 탄다(밀기·부스트도 그쪽으로)
+  let st = '';
+  const hs = Math.hypot(P.vel.x, P.vel.z);
+  if (hs > 1.5) { const d = (P.vel.x * Math.sin(P.heading) + P.vel.z * Math.cos(P.heading)) / hs; if (Math.abs(d) > 0.35 && (d < 0) !== P.sw) { P.sw = d < 0; st = stanceName() + '로 착지'; } }
+  if (P.airTime > 0.5) { const deg = Math.round(Math.abs(P.airSpin) * 180 / Math.PI / 45) * 45; toast((deg >= 90 ? deg + '° 스핀 · ' : '') + '체공 ' + P.airTime.toFixed(1) + '초' + (st ? ' · ' + st : '')); }
+  else if (st) toast(st);
   if (impact > 2.5) { if (!RM) P.shake = Math.min(0.5, impact * 0.03); spawnSpray(Math.min(40, 10 + impact * 3), 3.2); }
 }
 /* 그라인드: 레일·박스 윗면 선분에 붙어 미끄러진다. 진입 램프 끝에서 그대로 올라타거나, 점프해서 위로 떨어지면 붙는다. */
@@ -1379,9 +1396,10 @@ canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointerc
 
 function updateCamera(dt) {
   const spd = P.speed;
-  if (!running) { cam.userYaw = 0.75 + (RM ? 0 : Math.sin(time * 0.35) * 0.55); cam.userPitch = 0.05; cam.yaw = P.heading; }
+  const th = P.heading + (P.sw ? Math.PI : 0);                       // 진행 방향(레귤러면 테일 쪽)
+  if (!running) { cam.userYaw = 0.75 + (RM ? 0 : Math.sin(time * 0.35) * 0.55); cam.userPitch = 0.05; cam.yaw = th; }
   else {
-    const velYaw = Math.atan2(P.vel.x, P.vel.z), tgt = P.heading + angDiff(P.heading, velYaw) * ss(2, 7, spd);
+    const velYaw = Math.atan2(P.vel.x, P.vel.z), tgt = th + angDiff(th, velYaw) * ss(2, 7, spd);
     cam.yaw += angDiff(cam.yaw, tgt) * (1 - Math.exp(-dt * (2.4 + spd * 0.05)));
     if (!dragging) { const k = Math.exp(-dt * 1.6); cam.userYaw *= k; cam.userPitch *= k; }
   }
@@ -1411,12 +1429,43 @@ function updateRider(dt) {
   bm.makeBasis(vX, vY, vZ); qT.setFromRotationMatrix(bm);
   rig.quaternion.slerp(qT, 1 - Math.exp(-dt * 16)); rig.position.copy(P.pos);
   fwdV.copy(vZ); rightV.copy(vX);
-  const rollT = P.steer * 0.5 * ss(0.5, 9, P.speed) + (P.grounded ? 0 : P.steer * 0.25);
+  const rollT = (P.steer * 0.5 * ss(0.5, 9, P.speed) + (P.grounded ? 0 : P.steer * 0.25)) * (1 - 2 * P.swB);   // 레귤러면 반대 엣지로 기울어야 회전 안쪽
   leanRoll += (rollT - leanRoll) * (1 - Math.exp(-dt * 10)); lean.rotation.z = leanRoll;
   const tuck = (keys.ShiftLeft || keys.ShiftRight) ? 0.25 : 0, braking = (keys.KeyS || keys.ArrowDown) ? 0.15 : 0;
   const cT = onRail ? 0.45 : P.grounded ? clamp(0.25 + P.speed / 45 * 0.4 + tuck + braking, 0, 1) : 0.75;
   P.crouch += (cT - P.crouch) * (1 - Math.exp(-dt * 10));
   pose(P.crouch, P.steer, P.grounded ? 0 : onRail ? 0.5 : 1);
+}
+/* 머리: 가는 방향을 본다(돌 때는 도는 쪽을 먼저, 공중에선 스핀 쪽 → 떨어질 땐 착지 지점, 레귤러면 테일 쪽 어깨 너머).
+   느리거나 멈추면·리프트에 앉으면 앞쪽을 천천히 둘러본다. 목이 돌아가는 범위(가슴 방향 ±100°) 안에서 부드럽게 따라간다. */
+const hPrev = new THREE.Vector3(), hVel = new THREE.Vector3(), hRaw = new THREE.Vector3(), hDir = new THREE.Vector3(), hQ = new THREE.Quaternion();
+let hInit = false;
+function updateHead(dt, sit) {
+  if (!(dt > 0)) return;                                              // 첫 프레임 등 dt ≤ 0이면 보간 계수가 음수가 되어 발산하므로 건너뛴다
+  P.swB += ((P.sw ? 1 : 0) - P.swB) * (1 - Math.exp(-dt * 5));
+  if (!hInit) { hPrev.copy(rig.position); hInit = true; }
+  hRaw.copy(rig.position).sub(hPrev).divideScalar(dt); hPrev.copy(rig.position);   // 리프트 탑승 중엔 물리 속도가 없으니 rig 이동량으로 진행 방향을 잰다
+  if (hRaw.lengthSq() < 3600) hVel.lerp(hRaw, 1 - Math.exp(-dt * 8));   // 순간이동(리스폰·암전)은 무시
+  const v = RIDE.ph ? hVel : P.vel, hs = Math.hypot(v.x, v.z), base = HEAD.base, onSnow = P.grounded || !!P.grind;
+  let ty, tp;
+  if (running && hs > 0.8 && sit < 0.5) {
+    const a = Math.atan2(v.x, v.z) - P.steer * (RIDE.ph ? 0 : onSnow ? 0.35 : 0.6);
+    const pit = RIDE.ph || onSnow ? -0.22 : clamp(v.y / Math.max(hs, 1), -1.2, 0.4) * 0.5 - 0.2;
+    hDir.set(Math.sin(a) * Math.cos(pit), Math.sin(pit), Math.cos(a) * Math.cos(pit));
+    rig.updateMatrixWorld(true); lean.getWorldQuaternion(hQ).conjugate(); hDir.applyQuaternion(hQ);
+    ty = Math.atan2(-hDir.z, hDir.x); tp = Math.atan2(hDir.y, Math.hypot(hDir.x, hDir.z));
+  } else {
+    const sway = RM ? 0 : 0.42 * Math.sin(time * 0.37) + 0.22 * Math.sin(time * 0.91 + 1);
+    ty = base + (sit >= 0.5 ? 0 : P.sw ? 0.95 : -0.95) + sway;       // 서 있으면 진행할 쪽 어깨 너머, 앉으면 정면
+    tp = -0.1 + (RM ? 0 : 0.06 * Math.sin(time * 0.53));
+  }
+  let rel = angDiff(base, ty);
+  if (Math.abs(rel) > 2.5 && HEAD.side) rel = HEAD.side * 1.75;       // 바로 뒤를 가리키면 돌던 쪽 그대로 둔다(좌우로 떨지 않게)
+  rel = clamp(rel, -1.75, 1.75);
+  if (Math.abs(rel) > 0.3) HEAD.side = Math.sign(rel);
+  const k = 1 - Math.exp(-dt * 7);
+  HEAD.y += (base + rel - HEAD.y) * k; HEAD.p += (clamp(tp, -0.7, 0.4) - HEAD.p) * k;
+  head.rotation.set(0, HEAD.y, HEAD.p);
 }
 
 /* ───────── HUD / 토스트 ───────── */
@@ -1556,7 +1605,7 @@ function startRide(c) {
   const len = Math.hypot(P.pos.x - RIDE.ctrl.x, P.pos.z - RIDE.ctrl.z) + Math.hypot(RIDE.ctrl.x - c.G.x, RIDE.ctrl.z - c.G.z);
   RIDE.appT = clamp(len / 3.5, 0.8, 3);
   RIDE.cs = Math.min(0, c.sBoard - LIFT_V * (RIDE.appT + 0.5)); RIDE.chairOn = RIDE.cs >= 0;
-  RIDE.h0 = P.heading; RIDE.h = P.heading;
+  RIDE.h0 = P.heading; RIDE.h = P.heading; P.sw = false;              // 리프트에선 기본 스탠스로 앉는다
   P.vel.set(0, 0, 0); P.grounded = false; P.grind = null; P.jumpQ = 0; P.stun = 0; P.steer = 0; trackBreak = true;
   rLook.copy(P.pos); rLook.y += 1;
   rideGo('board');
@@ -1846,7 +1895,7 @@ function drawMinimap() {
   cone.addColorStop(0, 'rgba(255,90,54,.32)'); cone.addColorStop(1, 'rgba(255,90,54,0)');
   g.fillStyle = cone; g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, cr, -Math.PI / 2 - 0.5, -Math.PI / 2 + 0.5); g.closePath(); g.fill();
   g.restore();
-  const hx = Math.sin(P.heading), hz = Math.cos(P.heading);
+  const hd = P.sw ? -1 : 1, hx = Math.sin(P.heading) * hd, hz = Math.cos(P.heading) * hd;   // 화살표 = 진행 방향(레귤러면 테일 쪽)
   g.rotate(Math.atan2(hx * rx + hz * rz, hx * fx + hz * fz)); g.scale(ps, ps);
   g.beginPath(); g.moveTo(0, -8); g.lineTo(6, 6); g.lineTo(0, 3); g.lineTo(-6, 6); g.closePath();
   g.fillStyle = '#ff5a36'; g.strokeStyle = '#ffffff'; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke(); g.fill();
@@ -1882,7 +1931,7 @@ function frame(now) {
     rideTick(dt);
     if (!RIDE.ph) { accT += dt; while (accT >= STEP) { physics(STEP); accT -= STEP; } if (P.grounded && P.speed > 1.5) addTrack(rightV.x, rightV.z); else if (!P.grounded) trackBreak = true; }
   }
-  if (RIDE.ph) { rideRider(dt); rideCamera(dt); } else { updateRider(dt); updateCamera(dt); }
+  if (RIDE.ph) { rideRider(dt); rideCamera(dt); updateHead(dt, ss(0, 1, RIDE.sit)); } else { updateRider(dt); updateCamera(dt); updateHead(dt, 0); }
   const sx = Math.round(P.pos.x * 2) / 2, sz = Math.round(P.pos.z * 2) / 2;
   sun.target.position.set(sx, P.pos.y, sz); sun.position.set(sx + SUN_DIR.x * 150, P.pos.y + SUN_DIR.y * 150, sz + SUN_DIR.z * 150);
   sky.position.copy(camera.position);
@@ -1891,7 +1940,7 @@ function frame(now) {
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
-window.__snow = { P, tune, keys, H, respawn, setRunning, cam, renderer, JIB_LINES, PX, RIDE, RIDES, startRide, rideGo };
+window.__snow = { P, HEAD, tune, keys, H, respawn, setRunning, cam, renderer, JIB_LINES, PX, RIDE, RIDES, startRide, rideGo };
 })();
 </script>
 
